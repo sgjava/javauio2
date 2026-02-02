@@ -1,2 +1,2 @@
-# javauio2
-Java UIO provides high performance Java interfaces for Linux Userspace IO.
+# Java UIO 2
+Java UIO 2 provides high performance FFM Java interfaces for Linux Userspace IO.
