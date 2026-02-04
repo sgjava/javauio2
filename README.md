@@ -3,6 +3,12 @@
 [![JDK 25 LTS](https://img.shields.io/badge/JDK-25_LTS-orange.svg)](https://openjdk.java.net/projects/jdk/25/)
 [![Ubuntu 24.04](https://img.shields.io/badge/Ubuntu-24.04_Noble-blue.svg)](https://ubuntu.com/blog/whats-new-in-security-for-ubuntu-24-04-lts)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Arch: ARM64](https://img.shields.io/badge/Arch-ARM64%20(v8)-green.svg)](https://github.com/sgjava/javauio2)
+[![Arch: ARM32](https://img.shields.io/badge/Arch-ARM32%20(v7)-yellow.svg)](https://github.com/sgjava/javauio2)
+[![Arch: X86_64](https://img.shields.io/badge/Arch-X86__64-blue.svg)](https://github.com/sgjava/javauio2)
+[![API: FFM/Panama](https://img.shields.io/badge/API-FFM%2FPanama-red.svg)](https://openjdk.org/projects/panama/)
+[![Performance: High Speed](https://img.shields.io/badge/Performance-High%20Speed-brightgreen.svg)](https://github.com/sgjava/javauio2)
+[![Interface: Linux CDEV](https://img.shields.io/badge/Interface-Linux%20CDEV-lightgrey.svg)](https://git.kernel.org/pub/scm/libs/libgpiod/libgpiod.git)
 
 **Java UIO 2** is the next-generation evolution of the Java UIO project, rebuilt from the ground up to leverage the **Foreign Function & Memory API (FFM)**. By moving beyond traditional JNI, Java UIO 2 achieves unprecedented performance and hardware-level accuracy for Linux Userspace IO. Engineered for **JDK 25**, it provides a cutting-edge cross-platform solution for modern embedded systems.
 
