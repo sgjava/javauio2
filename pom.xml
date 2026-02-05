@@ -13,7 +13,8 @@
     <url>https://github.com/sgjava/javauio</url>    
     
     <modules>
-        <module>periphery</module>
+        <module>periphery2</module>
+        <module>demo2</module>
     </modules>
 
     <properties>
@@ -23,7 +24,10 @@
         <slf4j.version>2.0.17</slf4j.version>
         <logback.version>1.5.25</logback.version>
         <lombok.version>1.18.42</lombok.version>
+        <picocli.version>4.7.7</picocli.version>
     </properties>
+    
+    
 
     <dependencyManagement>
         <dependencies>
@@ -38,6 +42,11 @@
                 <version>${logback.version}</version>
             </dependency>
             <dependency>
+                <groupId>info.picocli</groupId>
+                <artifactId>picocli</artifactId>
+                <version>${picocli.version}</version>
+            </dependency>                
+            <dependency>
                 <groupId>org.projectlombok</groupId>
                 <artifactId>lombok</artifactId>
                 <version>${lombok.version}</version>
@@ -49,6 +58,24 @@
     <build>
         <pluginManagement>
             <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-clean-plugin</artifactId>
+                    <version>3.5.0</version>
+                    <configuration>
+                        <filesets>
+                            <fileset>
+                                <directory>${project.basedir}/work</directory>
+                                <includes>
+                                    <include>**/build/**</include>
+                                    <include>**/build-artifacts/**</include>
+                                </includes>
+                                <followSymlinks>false</followSymlinks>
+                            </fileset>
+                        </filesets>
+                    </configuration>
+                </plugin>
+                
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-compiler-plugin</artifactId>
