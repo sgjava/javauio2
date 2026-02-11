@@ -13,8 +13,22 @@
 **Java UIO 2** is the next-generation evolution of the Java UIO project, rebuilt from the ground up to leverage the **Foreign Function & Memory API (FFM)**. By moving beyond traditional JNI, Java UIO 2 achieves unprecedented performance and hardware-level accuracy for Linux Userspace IO. Engineered for **JDK 25**, it provides a cutting-edge cross-platform solution for modern embedded systems.
 
 ## 🚀 The FFM Evolution
-
 While the original Java UIO set the standard for JNI-based IO, Java UIO 2 moves into the future with **Project Panama**. By utilizing FFM (refined in JDK 25), we eliminate the JNI "tax," allowing the JVM to optimize native calls with the same efficiency as standard Java code. 
+
+### Download project
+* `sudo apt install git`
+* `cd ~/`
+* `git clone --depth 1 https://github.com/sgjava/javauio2.git`
+
+### Run script
+* `cd ~/javauio2/scripts`
+* `./install-java.sh`
+* `./setup-permissions.sh` (only required on ARM)
+* `sudo reboot`
+* `cd ~/javauio2`
+* `mvn clean install`
+* `-P arm64` (profile for aarch64)
+* `-P arm32` (profile for armhf, but no runtime linker yet)
 
 ### Performance Benchmark (Pine64 ARM64)
 In raw performance testing on the Pine A64 (Cortex-A53), the FFM implementation demonstrated a massive leap over established JNI methods:

@@ -11,7 +11,7 @@
         </goals>
         <properties>              
             <exec.vmArgs>--enable-native-access=ALL-UNNAMED</exec.vmArgs>
-            <exec.appArgs>-v</exec.appArgs>
+            <exec.appArgs></exec.appArgs>
             <exec.classpath>${user.home}/NetBeansProjects/javauio2/demo/target/demo2-1.0.0-SNAPSHOT-jar-with-dependencies.jar</exec.classpath>
             <exec.args>${exec.vmArgs} -classpath ${exec.classpath}:%classpath ${exec.mainClass} ${exec.appArgs}</exec.args>
             <exec.executable>java</exec.executable>

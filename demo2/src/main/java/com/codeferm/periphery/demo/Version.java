@@ -1,7 +1,7 @@
-package com.codeferm.periphery;
+package com.codeferm.periphery.demo;
 
+import com.codeferm.periphery.NativeLoader;
 import lombok.extern.slf4j.Slf4j;
-import org.periphery.NativeLoader;
 import org.periphery.Periphery;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;

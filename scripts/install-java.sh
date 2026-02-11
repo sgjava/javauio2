@@ -4,7 +4,7 @@
 #
 # @author: sgoldsmith
 #
-# Install dependencies, JDK 25 for all but x86_32.
+# Install dependencies, JDK 25, and Multi-Arch SDL2 Cross-Compile Tooling.
 #
 # Steven P. Goldsmith
 # sgjava@gmail.com
@@ -12,6 +12,7 @@
 set -e
 
 ARCH=$(uname -m)
+UBUNTU_CODENAME=$(lsb_release -sc)
 SDKMAN_DIR="$HOME/.sdkman"
 JAVA_TMP="$HOME/.java_tmp"
 JEXTRACT_SRC="$HOME/jextract"
@@ -54,10 +55,47 @@ case $ARCH in
 esac
 
 echo "--------------------------------------------------"
-echo "STEP 4: Dev Tooling & jextract Sync (x86_64 Only)"
+echo "STEP 4: Multi-Arch & Dev Tooling (x86_64 Only)"
 echo "--------------------------------------------------"
 if [ "$ARCH" == "x86_64" ]; then
-    sudo apt install -y libclang-dev llvm gcc-arm-linux-gnueabihf gcc-aarch64-linux-gnu cmake qemu-user qemu-user-static libc6-arm64-cross
+    echo "Configuring Multi-Arch Repositories for arm64/armhf..."
+    
+    # 1. Add architectures
+    sudo dpkg --add-architecture arm64
+    sudo dpkg --add-architecture armhf
+
+    # 2. Fix the "404 Not Found" for ARM packages on x86 mirrors
+    # Handle the classic /etc/apt/sources.list
+    if [ -f /etc/apt/sources.list ]; then
+        sudo sed -i 's/^deb http/deb [arch=amd64] http/g' /etc/apt/sources.list
+        sudo sed -i 's/^deb-src http/deb-src [arch=amd64] http/g' /etc/apt/sources.list
+    fi
+    
+    # Handle the Noble (24.04) DEB822 format in /etc/apt/sources.list.d/ubuntu.sourcesm
+    if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+        # If 'Architectures' line exists, make it 'amd64'. If not, we'd need to add it, 
+        # but usually Noble includes it as a blank or default.
+        if grep -q "Architectures:" /etc/apt/sources.list.d/ubuntu.sources; then
+            sudo sed -i 's/^Architectures: .*/Architectures: amd64/' /etc/apt/sources.list.d/ubuntu.sources
+        else
+            # Append it to the end of each stanza (simple version)
+            sudo sed -i '/^URIs:/i Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
+        fi
+    fi
+
+    # 3. Add the Ports mirrors for ARM
+    sudo tee /etc/apt/sources.list.d/arm-ports.list <<EOF
+deb [arch=arm64,armhf] http://ports.ubuntu.com/ubuntu-ports/ $UBUNTU_CODENAME main restricted universe multiverse
+deb [arch=arm64,armhf] http://ports.ubuntu.com/ubuntu-ports/ $UBUNTU_CODENAME-updates main restricted universe multiverse
+deb [arch=arm64,armhf] http://ports.ubuntu.com/ubuntu-ports/ $UBUNTU_CODENAME-security main restricted universe multiverse
+EOF
+
+    sudo apt update
+    
+    # 4. Install Cross Compilers and Real SDL2 target libraries
+    sudo apt install -y libclang-dev llvm gcc-arm-linux-gnueabihf gcc-aarch64-linux-gnu cmake \
+                        qemu-user qemu-user-static \
+                        libsdl2-dev:amd64 libsdl2-dev:arm64 libsdl2-dev:armhf
 
     sdk install maven || true
     sdk install ant || true
@@ -72,17 +110,12 @@ if [ "$ARCH" == "x86_64" ]; then
     fi
 
     cd "$JEXTRACT_SRC"
-    
-    # KILL THE WRAPPER
     rm -f gradlew gradlew.bat
     rm -rf gradle/wrapper
 
-    # DYNAMIC LLVM DETECTION
     LLVM_BASE_PATH=$(ls -d /usr/lib/llvm-* | sort -V | tail -n 1)
     LLVM_LIB_PATH="$LLVM_BASE_PATH/lib"
     
-    # FIX LIBCLANG WARNING: Ensure libclang.so symlink is valid
-    # Based on your ls, we link the versioned file to the generic one
     ACTUAL_CLANG_SO=$(ls $LLVM_LIB_PATH/libclang-[0-9]*.so | head -n 1)
     if [ ! -z "$ACTUAL_CLANG_SO" ]; then
         echo "Repairing libclang symlink: $ACTUAL_CLANG_SO -> $LLVM_LIB_PATH/libclang.so"
@@ -92,7 +125,6 @@ if [ "$ARCH" == "x86_64" ]; then
 
     REAL_JAVA_HOME=$(readlink -f "$SDKMAN_DIR/candidates/java/current")
 
-    echo "Building with System Gradle (SDKMAN)..."
     gradle -Dorg.gradle.java.home="$REAL_JAVA_HOME" \
            -Pjdk_home="$REAL_JAVA_HOME" \
            -Pllvm_home="$LLVM_BASE_PATH" \
@@ -148,20 +180,18 @@ echo "STEP 6: Comprehensive Verification"
 echo "--------------------------------------------------"
 [[ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ]] && source "$SDKMAN_DIR/bin/sdkman-init.sh"
 
-printf "Java:     " && java -version 2>&1 | head -n 1
+printf "Java:      " && java -version 2>&1 | head -n 1
 
 if [ "$ARCH" == "x86_64" ]; then
-    printf "Maven:    " && mvn -version | head -n 1
-    printf "Ant:      " && ant -version | head -n 1
-    printf "Gradle:   " && gradle -version | grep "Gradle"
-    printf "jextract: " && "$JEXTRACT_BIN_DIR/jextract" --help | head -n 1
+    printf "Maven:     " && mvn -version | head -n 1
+    printf "Ant:       " && ant -version | head -n 1
+    printf "Gradle:    " && gradle -version | grep "Gradle"
+    printf "jextract:  " && "$JEXTRACT_BIN_DIR/jextract" --help | head -n 1
     
-    # Verification check updated to look for the specific files we just linked
-    if [ -f "$LLVM_LIB_PATH/libclang.so" ]; then
-        echo "Clang Lib: Found and verified in $LLVM_LIB_PATH"
-    else
-        echo "WARNING: libclang.so still missing."
-    fi
+    # Multi-arch lib verification
+    echo "Verifying SDL2 multi-arch libs..."
+    [ -f /usr/lib/aarch64-linux-gnu/libSDL2.so ] && echo "SDL2 ARM64: OK" || echo "SDL2 ARM64: MISSING"
+    [ -f /usr/lib/arm-linux-gnueabihf/libSDL2.so ] && echo "SDL2 ARM32: OK" || echo "SDL2 ARM32: MISSING"
 fi
 echo "--------------------------------------------------"
 echo "Setup Complete! Please run: source /etc/environment"
