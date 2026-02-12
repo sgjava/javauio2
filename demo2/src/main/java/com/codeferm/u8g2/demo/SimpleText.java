@@ -22,16 +22,12 @@ public class SimpleText extends Base {
 
     @Override
     protected void run(MemorySegment u8g2) {
-        // You can use showText from the base class
-        showText(u8g2, "Welcome to Java 25 FFM!");
-        // Or do custom drawing using the instance arena
-        U8g2.u8g2_DrawCircle(u8g2, (short) 64, (short) 32, (short) 10, (byte) 1);
-        U8g2.u8g2_SendBuffer(u8g2);
+        // Use showText from the base class
+        showText(u8g2, "Welcome to Java 25 FFM!");        
     }
 
     public static void main(String[] args) {
         int exitCode = new CommandLine(new SimpleText()).execute(args);
         System.exit(exitCode);
     }
-
 }
