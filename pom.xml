@@ -16,6 +16,7 @@
         <module>periphery2</module>
         <module>demo2</module>
         <module>u8g22</module>
+        <module>tools2</module>
     </modules>
 
     <properties>
