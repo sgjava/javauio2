@@ -5,7 +5,6 @@ package com.codeferm.u8g2.demo;
 
 import java.lang.foreign.MemorySegment;
 import lombok.extern.slf4j.Slf4j;
-import org.u8g2.U8g2;
 import picocli.CommandLine;
 
 /**

@@ -143,26 +143,18 @@ public abstract class Base implements Callable<Integer> {
      */
     public void showText(final MemorySegment u8g2, final String text) {
         log.atDebug().log(text);
-
         try (final var localArena = Arena.ofConfined()) {
-            final int displayWidth = U8g2.u8g2_GetDisplayWidth_Java(u8g2);
-            final int displayHeight = U8g2.u8g2_GetDisplayHeight_Java(u8g2);
-            final int maxHeight = U8g2.u8g2_GetMaxCharHeight_Java(u8g2);
-
+            final var maxHeight = U8g2.u8g2_GetMaxCharHeight_Java(u8g2);
             U8g2.u8g2_ClearBuffer(u8g2);
-
             String[] words = text.split(" ");
             StringBuilder currentLine = new StringBuilder();
-            int y = maxHeight;
-
+            var y = maxHeight;
             for (String word : words) {
                 // Check if adding this word (plus a space) exceeds width
                 String testLine = currentLine.length() == 0 ? word : currentLine + " " + word;
-
                 // Allocate temporary string for width measurement
                 MemorySegment testSegment = localArena.allocateFrom(testLine);
-
-                if (U8g2.u8g2_GetStrWidth(u8g2, testSegment) < displayWidth) {
+                if (U8g2.u8g2_GetStrWidth(u8g2, testSegment) < width) {
                     // Word fits, update the current line
                     currentLine = new StringBuilder(testLine);
                 } else {
@@ -171,21 +163,17 @@ public abstract class Base implements Callable<Integer> {
                         U8g2.u8g2_DrawStr(u8g2, (short) 1, (short) y, localArena.allocateFrom(currentLine.toString()));
                         y += maxHeight;
                     }
-
                     // If we've run out of vertical space, stop
-                    if (y > displayHeight) {
+                    if (y > height) {
                         break;
                     }
-
                     currentLine = new StringBuilder(word);
                 }
             }
-
             // Draw the very last line if there's room
-            if (currentLine.length() > 0 && y <= displayHeight) {
+            if (currentLine.length() > 0 && y <= height) {
                 U8g2.u8g2_DrawStr(u8g2, (short) 1, (short) y, localArena.allocateFrom(currentLine.toString()));
             }
-
             U8g2.u8g2_SendBuffer(u8g2);
 
             try {
