@@ -22,7 +22,7 @@ WORK_DIR="$PROJECT_ROOT/work/periphery"
 C_SRC_DIR="$WORK_DIR/c-periphery"
 WORK_ARTIFACTS="$WORK_DIR/build-artifacts/$ARCH"
 GEN_DIR="$MODULE_ROOT/target/generated-sources/jextract"
-RES_DIR="$MODULE_ROOT/src/main/resources/native"
+RES_DIR="$MODULE_ROOT/target/classes/native"
 
 LLVM_PATH=$(ls -d /usr/lib/llvm-* | sort -V | tail -n 1)/lib
 export LD_LIBRARY_PATH=$LLVM_PATH

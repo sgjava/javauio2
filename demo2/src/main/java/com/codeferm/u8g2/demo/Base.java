@@ -235,6 +235,9 @@ public abstract class Base implements Callable<Integer> {
             U8g2.u8g2_SetPowerSave_Java(u8g2, (byte) 0);
             U8g2.u8g2_ClearBuffer(u8g2);
             run(u8g2);
+            U8g2.u8g2_ClearBuffer(u8g2);
+            U8g2.u8g2_SendBuffer(u8g2);
+            U8g2.u8g2_SetPowerSave_Java(u8g2, (byte) 1);
             // Clean up
             try {
                 switch (type) {
