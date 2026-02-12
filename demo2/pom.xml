@@ -13,30 +13,6 @@
 
     <name>Demo 2</name>
     <description>Java UIO 2 Demos</description>
-
-    <profiles>
-        <profile>
-            <id>x86_64</id>
-            <activation>
-                <activeByDefault>true</activeByDefault>
-            </activation>
-            <properties>
-                <native.arch>x86_64</native.arch>
-            </properties>
-        </profile>
-        <profile>
-            <id>arm32</id>
-            <properties>
-                <native.arch>arm32</native.arch>
-            </properties>
-        </profile>
-        <profile>
-            <id>arm64</id>
-            <properties>
-                <native.arch>arm64</native.arch>
-            </properties>
-        </profile>
-    </profiles>     
                                              
     <build>
         <plugins>
@@ -112,7 +88,6 @@
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
-            <scope>provided</scope>
         </dependency>
     </dependencies>
 </project>

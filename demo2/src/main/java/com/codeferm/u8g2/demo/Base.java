@@ -5,7 +5,11 @@ package com.codeferm.u8g2.demo;
 
 import com.codeferm.u8g2.NativeLoader;
 import com.codeferm.u8g2.U8g2Factory;
+import static com.codeferm.u8g2.U8g2Factory.Transport.I2CHW;
+import static com.codeferm.u8g2.U8g2Factory.Transport.I2CSW;
 import static com.codeferm.u8g2.U8g2Factory.Transport.SDL;
+import static com.codeferm.u8g2.U8g2Factory.Transport.SPIHW;
+import static com.codeferm.u8g2.U8g2Factory.Transport.SPISW;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.concurrent.Callable;
@@ -231,7 +235,22 @@ public abstract class Base implements Callable<Integer> {
             U8g2.u8g2_SetPowerSave_Java(u8g2, (byte) 0);
             U8g2.u8g2_ClearBuffer(u8g2);
             run(u8g2);
-            U8g2.u8g2_SetPowerSave_Java(u8g2, (byte) 1);
+            // Clean up
+            try {
+                switch (type) {
+                    case I2CHW, I2CSW -> {
+                        // done_i2c is a class, so we make an invoker and invoke the handle
+                        U8g2.done_i2c.makeInvoker().handle().invokeExact();
+                    }
+                    case SPIHW, SPISW -> {
+                        // Same for SPI
+                        U8g2.done_spi.makeInvoker().handle().invokeExact();
+                    }
+                }
+            } catch (Throwable t) {
+                log.error("Failed to close transport bus", t);
+            }
+            U8g2.done_user_data(u8g2);
         }
         return exitCode;
     }

@@ -26,9 +26,32 @@
         <logback.version>1.5.25</logback.version>
         <lombok.version>1.18.42</lombok.version>
         <picocli.version>4.7.7</picocli.version>
+        <junit.version>5.11.0</junit.version>
     </properties>
-    
-    
+
+    <profiles>
+        <profile>
+            <id>x86_64</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <properties>
+                <native.arch>x86_64</native.arch>
+            </properties>
+        </profile>
+        <profile>
+            <id>arm32</id>
+            <properties>
+                <native.arch>arm32</native.arch>
+            </properties>
+        </profile>
+        <profile>
+            <id>arm64</id>
+            <properties>
+                <native.arch>arm64</native.arch>
+            </properties>
+        </profile>
+    </profiles>    
 
     <dependencyManagement>
         <dependencies>
@@ -52,6 +75,12 @@
                 <artifactId>lombok</artifactId>
                 <version>${lombok.version}</version>
                 <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter</artifactId>
+                <version>${junit.version}</version>
+                <scope>test</scope>
             </dependency>
         </dependencies>
     </dependencyManagement>
@@ -83,6 +112,15 @@
                     <version>${maven.compiler.plugin.version}</version>
                     <configuration>
                         <release>25</release>
+                    </configuration>
+                </plugin>
+                
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.5.0</version>
+                    <configuration>
+                        <argLine>--enable-native-access=ALL-UNNAMED</argLine>
                     </configuration>
                 </plugin>
             </plugins>

@@ -13,23 +13,17 @@
 
 set -e
 
-# ARCH is passed from Maven Profile (x86_64, arm64, arm32)
 ARCH=$1
+if [ -z "$ARCH" ]; then ARCH="x86_64"; fi
 
-# Resolve project structure
 MODULE_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 PROJECT_ROOT=$(cd "$MODULE_ROOT/.." && pwd)
-
-# Work directory configuration
 WORK_DIR="$PROJECT_ROOT/work/periphery"
 C_SRC_DIR="$WORK_DIR/c-periphery"
 WORK_ARTIFACTS="$WORK_DIR/build-artifacts/$ARCH"
-
-# Maven target and resource paths
 GEN_DIR="$MODULE_ROOT/target/generated-sources/jextract"
 RES_DIR="$MODULE_ROOT/src/main/resources/native"
 
-# Resolve LLVM for jextract
 LLVM_PATH=$(ls -d /usr/lib/llvm-* | sort -V | tail -n 1)/lib
 export LD_LIBRARY_PATH=$LLVM_PATH
 
@@ -61,8 +55,11 @@ case $ARCH in
         ;;
 esac
 
-cmake -DBUILD_SHARED_LIBS=ON -DCMAKE_C_FLAGS="-DPERIPHERY_GPIO_CDEV_SUPPORT=1" $CMAKE_OPTS ..
-make -j$(nproc)
+# 1. We removed CMAKE_C_FLAGS redefinition to stop "redefined" warnings
+# 2. Added -DBUILD_TESTS=OFF to stop the fgets warnings
+cmake -DBUILD_SHARED_LIBS=ON -DBUILD_TESTS=OFF $CMAKE_OPTS .. > /dev/null
+make -j$(nproc) > /dev/null
+
 mkdir -p "$RES_DIR"
 cp "libperiphery.so" "$RES_DIR/"
 
@@ -76,6 +73,9 @@ cat <<EOF > "$WORK_ARTIFACTS/sizer.c"
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
+#ifdef _XOPEN_SOURCE
+#undef _XOPEN_SOURCE
+#endif
 #define PERIPHERY_GPIO_CDEV_SUPPORT 1
 #include "gpio.c"
 #include "i2c.c"
@@ -84,10 +84,8 @@ cat <<EOF > "$WORK_ARTIFACTS/sizer.c"
 #include "pwm.c"
 #include "serial.c"
 #include "spi.c"
-
 const struct gpio_ops gpio_cdev_ops = {0};
 const struct gpio_ops gpio_sysfs_ops = {0};
-
 int main() {
     printf("export GPIO_SIZE=%zu\n", sizeof(struct gpio_handle));
     printf("export I2C_SIZE=%zu\n", sizeof(struct i2c_handle));
@@ -100,10 +98,8 @@ int main() {
 }
 EOF
 
-# Compile the sizer
-$CC -D_GNU_SOURCE -DPERIPHERY_GPIO_CDEV_SUPPORT=1 -I "$C_SRC_DIR/src" "$WORK_ARTIFACTS/sizer.c" -o "$WORK_ARTIFACTS/sizer"
+$CC -w -D_GNU_SOURCE -DPERIPHERY_GPIO_CDEV_SUPPORT=1 -I "$C_SRC_DIR/src" "$WORK_ARTIFACTS/sizer.c" -o "$WORK_ARTIFACTS/sizer"
 
-# Execute sizer and capture variables
 HOST_ARCH=$(uname -m)
 case $ARCH in
     arm64)
@@ -147,14 +143,11 @@ struct serial_handle { unsigned char reserved[$SERIAL_SIZE]; };
 struct spi_handle    { unsigned char reserved[$SPI_SIZE]; };
 EOF
 
-# Append all public headers to the wrapper
 ls "$C_SRC_DIR/src/"*.h | grep -v "_internal.h" | sed 's|.*|#include "&"|' >> "$WRAPPER"
 
-# Generate includes list and filter for ONLY the periphery source headers
-jextract --header-class-name Periphery -I "$C_SRC_DIR/src" --dump-includes "$INCLUDES" "$WRAPPER"
+jextract --header-class-name Periphery -I "$C_SRC_DIR/src" --dump-includes "$INCLUDES" "$WRAPPER" 2>/dev/null
 grep "c-periphery/src/" "$INCLUDES" | grep -v "_ops" | grep -v "unnamed" > "$FILTERED"
 
-# Perform final generation
 jextract --output "$GEN_DIR" \
          --target-package org.periphery \
          --header-class-name Periphery \
@@ -167,7 +160,7 @@ jextract --output "$GEN_DIR" \
          --include-struct spi_handle \
          --include-struct periphery_version \
          -I "$C_SRC_DIR/src" \
-         "@$FILTERED" "$WRAPPER"
+         "@$FILTERED" "$WRAPPER" 2>/dev/null
 
 touch "$GEN_DIR/.arch_$ARCH"
 echo "Build Successful for $ARCH."
