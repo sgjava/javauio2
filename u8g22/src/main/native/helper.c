@@ -21,6 +21,8 @@ void u8g2_SetFlipMode_Java(u8g2_t *u8g2, uint8_t mode) { u8g2_SetFlipMode(u8g2, 
 void u8g2_SetContrast_Java(u8g2_t *u8g2, uint8_t value) { u8g2_SetContrast(u8g2, value); }
 void u8g2_SetUserPtr_Java(u8g2_t *u8g2, void *p) { u8g2_SetUserPtr(u8g2, p); }
 void* u8g2_GetUserPtr_Java(u8g2_t *u8g2) { return u8g2_GetUserPtr(u8g2); }
+uint8_t* u8g2_GetBufferPtr_Java(u8g2_t *u8g2) { return u8g2_GetBufferPtr(u8g2); }
+size_t u8g2_GetBufferSize_Java(u8g2_t *u8g2) { return (size_t)8 * u8g2_GetBufferTileHeight(u8g2) * u8g2_GetBufferTileWidth(u8g2); }
 
 #ifdef USE_SDL
 #include <SDL2/SDL.h>

@@ -29,5 +29,7 @@ void u8g2_SetFlipMode_Java(u8g2_t *u8g2, uint8_t mode);
 void u8g2_SetContrast_Java(u8g2_t *u8g2, uint8_t value);
 void u8g2_SetUserPtr_Java(u8g2_t *u8g2, void *p);
 void* u8g2_GetUserPtr_Java(u8g2_t *u8g2);
+uint8_t* u8g2_GetBufferPtr_Java(u8g2_t *u8g2);
+size_t u8g2_GetBufferSize_Java(u8g2_t *u8g2);
 
 #endif /* U8G2_HELPER_H */
