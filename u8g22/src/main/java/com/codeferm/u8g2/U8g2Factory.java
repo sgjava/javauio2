@@ -68,22 +68,45 @@ public final class U8g2Factory {
     }
 
     /**
+     * Resolve rotation callback by integer degrees.
+     *
+     * @param rotation 0, 90, 180, 270 degrees or -1 for mirror.
+     * @return MemorySegment for the u8g2_cb_t.
+     */
+    public static MemorySegment getRotation(final int rotation) {
+        return switch (rotation) {
+            case 90 ->
+                U8g2.u8g2_cb_r1();
+            case 180 ->
+                U8g2.u8g2_cb_r2();
+            case 270 ->
+                U8g2.u8g2_cb_r3();
+            case -1 ->
+                U8g2.u8g2_cb_mirror();
+            default ->
+                U8g2.u8g2_cb_r0();
+        };
+    }
+
+    /**
      * Initialize I2C hardware driven display.
      *
      * @param u8g2 The {@link MemorySegment} representing the u8g2_t structure.
      * @param setup The setup type string (e.g., "ssd1306_i2c_128x64_noname_f").
+     * @param rotation Rotation in degrees (0, 90, 180, 270).
      * @param bus The I2C bus number (e.g., 1 for /dev/i2c-1).
      * @param address The I2C address of the display.
      */
-    public static void initHwI2c(final MemorySegment u8g2, final String setup, final int bus, final int address) {
-        invokeSetup(u8g2, setup, "u8x8_byte_arm_linux_hw_i2c");
+    public static void initHwI2c(final MemorySegment u8g2, final String setup, final int rotation, final int bus,
+            final int address) {
+        invokeSetup(u8g2, setup, rotation, "u8x8_byte_arm_linux_hw_i2c");
         U8g2.init_i2c_hw(u8g2, (byte) bus);
         U8g2.u8g2_SetI2CAddress_Java(u8g2, (byte) (address << 1));
         log.atDebug().log(String.format("Size %d x %d, draw color %d",
                 U8g2.u8g2_GetDisplayWidth_Java(u8g2),
                 U8g2.u8g2_GetDisplayHeight_Java(u8g2),
                 U8g2.u8g2_GetDrawColor_Java(u8g2)));
-        log.atDebug().log(String.format("Bus 0x%02x, Address %02x", bus, address));
+        log.atDebug().log(String.format("Bus 0x%02x, Address %02x, Rotation %d", bus, address, rotation));
     }
 
     /**
@@ -91,21 +114,23 @@ public final class U8g2Factory {
      *
      * @param u8g2 The {@link MemorySegment} representing the u8g2_t structure.
      * @param setup The setup type string.
+     * @param rotation Rotation in degrees (0, 90, 180, 270).
      * @param gpio The GPIO chip number.
      * @param scl The SCL pin number.
      * @param sda The SDA pin number.
      * @param res The RESET pin number.
      * @param delay Nanosecond delay or 0 for none.
      */
-    public static void initSwI2c(final MemorySegment u8g2, final String setup, final int gpio, final int scl, final int sda,
-            final int res, final long delay) {
-        invokeSetup(u8g2, setup, "u8x8_byte_arm_linux_sw_i2c");
+    public static void initSwI2c(final MemorySegment u8g2, final String setup, final int rotation, final int gpio, final int scl,
+            final int sda, final int res, final long delay) {
+        invokeSetup(u8g2, setup, rotation, "u8x8_byte_arm_linux_sw_i2c");
         U8g2.init_i2c_sw(u8g2, (byte) gpio, (byte) scl, (byte) sda, (byte) res, delay);
         log.atDebug().log(String.format("Size %d x %d, draw color %d",
                 U8g2.u8g2_GetDisplayWidth_Java(u8g2),
                 U8g2.u8g2_GetDisplayHeight_Java(u8g2),
                 U8g2.u8g2_GetDrawColor_Java(u8g2)));
-        log.atDebug().log(String.format("GPIO chip %d, SCL %d, SDA %d, RES %d, Delay %d", gpio, scl, sda, res, delay));
+        log.atDebug().log(String.format("GPIO chip %d, SCL %d, SDA %d, RES %d, Delay %d, Rotation %d", gpio, scl, sda, res, delay,
+                rotation));
     }
 
     /**
@@ -113,6 +138,7 @@ public final class U8g2Factory {
      *
      * @param u8g2 The {@link MemorySegment} representing the u8g2_t structure.
      * @param setup The setup type string.
+     * @param rotation Rotation in degrees (0, 90, 180, 270).
      * @param gpio The GPIO chip number.
      * @param bus The SPI bus number.
      * @param dc The Data/Command pin number.
@@ -121,15 +147,16 @@ public final class U8g2Factory {
      * @param spiMode The SPI mode (0-3).
      * @param maxSpeed The maximum SPI speed in Hz.
      */
-    public static void initHwSpi(final MemorySegment u8g2, final String setup, final int gpio, final int bus, final int dc,
-            final int res, final int cs, final short spiMode, final int maxSpeed) {
-        invokeSetup(u8g2, setup, "u8x8_byte_arm_linux_hw_spi");
+    public static void initHwSpi(final MemorySegment u8g2, final String setup, final int rotation, final int gpio, final int bus,
+            final int dc, final int res, final int cs, final short spiMode, final int maxSpeed) {
+        invokeSetup(u8g2, setup, rotation, "u8x8_byte_arm_linux_hw_spi");
         U8g2.init_spi_hw_advanced(u8g2, (byte) gpio, (byte) bus, (byte) dc, (byte) res, (byte) cs, spiMode, maxSpeed);
         log.atDebug().log(String.format("Size %d x %d, draw color %d",
                 U8g2.u8g2_GetDisplayWidth_Java(u8g2),
                 U8g2.u8g2_GetDisplayHeight_Java(u8g2),
                 U8g2.u8g2_GetDrawColor_Java(u8g2)));
-        log.atDebug().log(String.format("GPIO chip %d, bus 0x%02x, DC %d, RES %d, CS %d", gpio, bus, dc, res, cs));
+        log.atDebug().log(String.format("GPIO chip %d, bus 0x%02x, DC %d, RES %d, CS %d, Rotation %d", gpio, bus, dc, res, cs,
+                rotation));
     }
 
     /**
@@ -137,6 +164,7 @@ public final class U8g2Factory {
      *
      * @param u8g2 The {@link MemorySegment} representing the u8g2_t structure.
      * @param setup The setup type string.
+     * @param rotation Rotation in degrees (0, 90, 180, 270).
      * @param gpio The GPIO chip number.
      * @param dc The Data/Command pin number.
      * @param res The RESET pin number.
@@ -145,16 +173,16 @@ public final class U8g2Factory {
      * @param cs The Chip Select pin number.
      * @param delay Nanosecond delay or 0 for none.
      */
-    public static void initSwSpi(final MemorySegment u8g2, final String setup, final int gpio, final int dc, final int res,
-            final int mosi, final int sck, final int cs, final long delay) {
-        invokeSetup(u8g2, setup, "u8x8_byte_arm_linux_hw_spi");
+    public static void initSwSpi(final MemorySegment u8g2, final String setup, final int rotation, final int gpio, final int dc,
+            final int res, final int mosi, final int sck, final int cs, final long delay) {
+        invokeSetup(u8g2, setup, rotation, "u8x8_byte_arm_linux_hw_spi");
         U8g2.init_spi_sw(u8g2, (byte) gpio, (byte) dc, (byte) res, (byte) mosi, (byte) sck, (byte) cs, delay);
         log.atDebug().log(String.format("Size %d x %d, draw color %d",
                 U8g2.u8g2_GetDisplayWidth_Java(u8g2),
                 U8g2.u8g2_GetDisplayHeight_Java(u8g2),
                 U8g2.u8g2_GetDrawColor_Java(u8g2)));
-        log.atDebug().log(String.format("GPIO chip %d, DC %d, RES %d, MOSI %d, SCK %d, CS %d, Delay %d", gpio, dc, res, mosi, sck,
-                cs, delay));
+        log.atDebug().log(String.format("GPIO chip %d, DC %d, RES %d, MOSI %d, SCK %d, CS %d, Delay %d, Rotation %d", gpio, dc, res,
+                mosi, sck, cs, delay, rotation));
     }
 
     /**
@@ -162,14 +190,16 @@ public final class U8g2Factory {
      *
      * @param u8g2 The {@link MemorySegment} representing the u8g2_t structure.
      * @param setup The SDL setup type string (e.g., "sdl_128x64_1").
+     * @param rotation Rotation in degrees (0, 90, 180, 270).
      * @throws IllegalArgumentException if the setup string is not supported.
      */
-    public static void initSdl(final MemorySegment u8g2, final String setup) {
+    public static void initSdl(final MemorySegment u8g2, final String setup, final int rotation) {
+        final var rotationCb = getRotation(rotation);
         switch (setup) {
             case "sdl_128x64_1" ->
-                U8g2.u8g2_SetupBuffer_SDL_128x64(u8g2, U8g2.u8g2_cb_r0());
+                U8g2.u8g2_SetupBuffer_SDL_128x64(u8g2, rotationCb);
             case "sdl_256x128_1" ->
-                U8g2.u8g2_SetupBuffer_SDL_256x128(u8g2, U8g2.u8g2_cb_r0());
+                U8g2.u8g2_SetupBuffer_SDL_256x128(u8g2, rotationCb);
             default ->
                 throw new IllegalArgumentException("Unsupported SDL setup: " + setup);
         }
@@ -197,10 +227,11 @@ public final class U8g2Factory {
      *
      * @param u8g2 The {@link MemorySegment} representing the u8g2_t structure.
      * @param setup The name of the setup function.
+     * @param rotation Rotation in degrees (0, 90, 180, 270).
      * @param callback The name of the communication callback function.
      * @throws RuntimeException if native symbol lookup or invocation fails.
      */
-    private static void invokeSetup(final MemorySegment u8g2, final String setup, final String callback) {
+    private static void invokeSetup(final MemorySegment u8g2, final String setup, final int rotation, final String callback) {
         final var setupName = setup.startsWith("u8g2_Setup") ? setup : "u8g2_Setup_" + setup;
         final var setupAddr = LOOKUP.find(setupName).orElseThrow(() -> new RuntimeException("Setup not found: " + setupName));
         final var cbAddr = LOOKUP.find(callback).orElseThrow(() -> new RuntimeException("Callback not found: " + callback));
@@ -208,7 +239,7 @@ public final class U8g2Factory {
             final var handle = LINKER.downcallHandle(setupAddr, FunctionDescriptor.ofVoid(
                     C_POINTER, C_POINTER, C_POINTER, C_POINTER
             ));
-            handle.invokeExact(u8g2, U8g2.u8g2_cb_r0(), cbAddr, U8g2.u8x8_arm_linux_gpio_and_delay$address());
+            handle.invokeExact(u8g2, getRotation(rotation), cbAddr, U8g2.u8x8_arm_linux_gpio_and_delay$address());
         } catch (Throwable t) {
             throw new RuntimeException("Native mapping failure for " + setupName, t);
         }

@@ -36,6 +36,12 @@ public abstract class Base implements Callable<Integer> {
             = "Setup function to call, ${DEFAULT-VALUE} by default.")
     private String setup = "sdl_128x64_1";
     /**
+     * Rotation of the display.
+     */
+    @CommandLine.Option(names = {"--rotation"}, description
+            = "Rotation 0, 90, 180, 270 degrees, ${DEFAULT-VALUE} by default.")
+    private int rotation = 0;
+    /**
      * Font to use.
      */
     @CommandLine.Option(names = {"--font"}, description
@@ -75,12 +81,12 @@ public abstract class Base implements Callable<Integer> {
      * DC pin for SPI.
      */
     @CommandLine.Option(names = {"--dc"}, description = "SPI DC pin, ${DEFAULT-VALUE} by default.")
-    private int dc = 198;
+    private int dc = 199;
     /**
      * RESET pin for SPI.
      */
     @CommandLine.Option(names = {"--reset"}, description = "I2C/SPI RESET pin, ${DEFAULT-VALUE} by default.")
-    private int reset = 199;
+    private int reset = 198;
     /**
      * MOSI pin for SPI.
      */
@@ -102,10 +108,10 @@ public abstract class Base implements Callable<Integer> {
     @CommandLine.Option(names = {"--mode"}, description = "SPI mode, ${DEFAULT-VALUE} by default.")
     private short mode = 0;
     /**
-     * CS pin for SPI.
+     * SPI maximum speed.
      */
     @CommandLine.Option(names = {"--speed"}, description = "SPI maximum speed, ${DEFAULT-VALUE} by default.")
-    private long speed = 500000;
+    private int speed = 500000;
     /**
      * Nanosecond delay or 0 for none for software I2C and SPI.
      */
@@ -195,6 +201,7 @@ public abstract class Base implements Callable<Integer> {
         NativeLoader.load();
         var exitCode = 0;
         log.atDebug().log(String.format("Setup %s", setup));
+        log.atDebug().log(String.format("Rotation %d", rotation));
         log.atDebug().log(String.format("Type %s", type));
         log.atDebug().log(String.format("Font %s", font));
         // Confined arena manages the lifecycle of the u8g2 struct and all drawing strings, etc.
@@ -203,15 +210,15 @@ public abstract class Base implements Callable<Integer> {
             final var u8g2 = arena.allocate(org.u8g2.u8g2_struct.layout());
             switch (type) {
                 case I2CHW ->
-                    U8g2Factory.initHwI2c(u8g2, setup, bus, address);
+                    U8g2Factory.initHwI2c(u8g2, setup, rotation, bus, address);
                 case I2CSW ->
-                    U8g2Factory.initSwI2c(u8g2, setup, gpio, scl, sda, bus, delay);
+                    U8g2Factory.initSwI2c(u8g2, setup, rotation, gpio, scl, sda, reset, delay);
                 case SPIHW ->
-                    U8g2Factory.initHwSpi(u8g2, setup, gpio, bus, dc, bus, cs, mode, address);
+                    U8g2Factory.initHwSpi(u8g2, setup, rotation, gpio, bus, dc, reset, cs, mode, speed);
                 case SPISW ->
-                    U8g2Factory.initSwSpi(u8g2, setup, gpio, dc, bus, mosi, sck, cs, delay);
+                    U8g2Factory.initSwSpi(u8g2, setup, rotation, gpio, dc, reset, mosi, sck, cs, delay);
                 case SDL ->
-                    U8g2Factory.initSdl(u8g2, setup);
+                    U8g2Factory.initSdl(u8g2, setup, rotation);
                 default ->
                     throw new RuntimeException(String.format("%s is not a valid type", type));
             }
