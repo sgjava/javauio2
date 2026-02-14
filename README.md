@@ -72,6 +72,6 @@ Java UIO 2 provides a forward-looking strategy. While FFM is our primary focus f
 
 ## 🚧 Work in Progress
 This is the beginning of the FFM-native ecosystem for Java. The core infrastructure is stable, and the following modules are currently being ported:
-* **Periphery Core**: GPIO, I2C, SPI, LED, PWM, and Serial.
-* **u8g2**: High-performance port for monochrome displays.
+* ✅  **Periphery Core**: GPIO, I2C, SPI, LED, PWM, and Serial.
+* ✅  **u8g2**: High-performance port for monochrome displays.
 * **Real-time Sensors**: Optimized drivers for I2C/SPI sensors using zero-copy FFM memory segments.
