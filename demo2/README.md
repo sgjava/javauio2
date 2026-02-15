@@ -38,6 +38,9 @@ Line wrapping is built in as well.
 ![SpaceInvaders](images/SpaceInvaders.png)
 * SpaceInvaders.java: A classic arcade implementation that serves as a masterclass in game loop logic, collision detection, and sprite management within the monochrome constraints of U8g2.
 
+![Centipede](images/Centipede.png)
+* Centipede.java: A high-performance implementation of the classic arcade game Centipede, optimized for low-resolution displays (128x64 or128x128). 
+
 ![WireframeCube](images/WireframeCube.png)
 * WireframeCube.java uses math and drawing primitives to animate rotating 3D wireframe cube. No cheating with sprites here.
 
