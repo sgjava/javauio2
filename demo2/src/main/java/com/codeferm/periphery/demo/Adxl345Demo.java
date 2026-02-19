@@ -2,20 +2,19 @@ package com.codeferm.periphery.demo;
 
 import com.codeferm.periphery.NativeLoader;
 import com.codeferm.periphery.device.Adxl345;
-import java.lang.foreign.Arena;
+import com.codeferm.periphery.device.I2cBus;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
-import org.periphery.Periphery;
-import org.periphery.i2c_handle;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
 /**
- * ADXL345 demo using high-level FFM device class.
+ * ADXL345 demo using high-level I2cBus and Adxl345 device classes.
  * <p>
- * This demo includes a shutdown hook to ensure the terminal remains clean after a SIGINT (Ctrl+C).
+ * This demo utilizes the refactored "Bus + Device" architecture. The I2cBus manages the native FFM resources and thread safety,
+ * while the Adxl345 handles the sensor-specific logic.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -24,7 +23,7 @@ import picocli.CommandLine.Option;
  */
 @Slf4j
 @Command(name = "Adxl345Demo", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
-        description = "Read ADXL345 data using FFM Adxl345 device class.")
+        description = "Read ADXL345 data using FFM I2cBus and Adxl345 classes.")
 public class Adxl345Demo implements Callable<Integer> {
 
     static {
@@ -32,19 +31,19 @@ public class Adxl345Demo implements Callable<Integer> {
     }
 
     /**
-     * I2C device path (e.g., /dev/i2c-1).
+     * I2C device path.
      */
     @Option(names = {"-d", "--device"}, description = "I2C device, ${DEFAULT-VALUE} by default.")
     private String device = "/dev/i2c-1";
 
     /**
-     * I2C slave address of the ADXL345.
+     * I2C address of ADXL345.
      */
     @Option(names = {"-a", "--address"}, description = "Address, ${DEFAULT-VALUE} by default.")
     private short address = 0x53;
 
     /**
-     * Execution logic for the ADXL345 sampler.
+     * Execution logic for the demo.
      *
      * @return Exit code (0 for success, 1 for failure).
      */
@@ -52,23 +51,17 @@ public class Adxl345Demo implements Callable<Integer> {
     public Integer call() {
         var exitCode = 0;
 
-        // Add shutdown hook to move to next line on Ctrl+C
+        // Add shutdown hook to handle Ctrl+C cleanup
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            System.out.println(); // Next line after the \r output
-            log.info("Closing demo gracefully...");
+            System.out.println(); // Break the \r line
+            log.info("Shutdown signal received. Exiting...");
         }));
 
-        try (final var arena = Arena.ofConfined()) {
-            final var handle = arena.allocate(i2c_handle.layout());
-            final var path = arena.allocateFrom(device);
+        // 1. Initialize the shared bus (Owns the native handle and Arena)
+        try (final var bus = new I2cBus(device)) {
 
-            log.info("Opening I2C device: {}", device);
-            if (Periphery.i2c_open(handle, path) < 0) {
-                log.error("Failed to open I2C device: {}", device);
-                return 1;
-            }
-
-            try (final var adxl = new Adxl345(arena, handle, address)) {
+            // 2. Initialize the device (Uses the bus)
+            try (final var adxl = new Adxl345(bus, address)) {
                 final var deviceId = adxl.getDeviceId();
 
                 if (deviceId == (short) 0xe5) {
@@ -79,7 +72,6 @@ public class Adxl345Demo implements Callable<Integer> {
                     while (!Thread.currentThread().isInterrupted()) {
                         final var data = adxl.read();
 
-                        // Use %+5.2f to maintain fixed width and trailing spaces to clear artifacts
                         System.out.printf("\rSample - x: %+5.2f, y: %+5.2f, z: %+5.2f   ",
                                 data.get("x"), data.get("y"), data.get("z"));
 
@@ -90,14 +82,13 @@ public class Adxl345Demo implements Callable<Integer> {
                     exitCode = 1;
                 }
             } catch (final InterruptedException e) {
-                // Restore interrupted status and allow graceful exit
                 Thread.currentThread().interrupt();
             } catch (final Exception e) {
-                log.error("Device error: {}", e.getMessage(), e);
+                log.error("Device error: {}", e.getMessage());
                 exitCode = 1;
             }
         } catch (final Exception e) {
-            log.error("Native or Runtime error: {}", e.getMessage());
+            log.error("Bus error: {}", e.getMessage());
             exitCode = 1;
         }
 
