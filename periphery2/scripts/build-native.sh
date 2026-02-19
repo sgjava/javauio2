@@ -153,6 +153,7 @@ jextract --output "$GEN_DIR" \
          --header-class-name Periphery \
          --include-struct gpio_handle \
          --include-struct i2c_handle \
+         --include-struct i2c_msg \
          --include-struct led_handle \
          --include-struct mmio_handle \
          --include-struct pwm_handle \
