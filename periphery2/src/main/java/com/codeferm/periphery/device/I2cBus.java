@@ -13,10 +13,11 @@ import org.periphery.i2c_handle;
 import org.periphery.i2c_msg;
 
 /**
- * Thread-safe I2C bus wrapper for Linux i2c-dev character devices using FFM.
+ * Thread-safe I2C bus wrapper for Linux i2c-dev devices using FFM.
  * <p>
- * This class provides thread-safe access to an I2C bus by locking during transactions. It utilizes hardware-accurate layouts
- * generated during the build process to eliminate memory size guessing.
+ * This class provides high-performance access to I2C hardware. It enforces explicit 
+ * memory management by requiring the caller to specify the buffer size at construction, 
+ * ensuring predictable memory usage for native allocations.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -27,7 +28,7 @@ import org.periphery.i2c_msg;
 public class I2cBus implements AutoCloseable {
 
     /**
-     * Reentrant lock for thread-safe I2C access.
+     * Reentrant lock for thread-safe access to the I2C hardware.
      */
     private final ReentrantLock lock = new ReentrantLock();
 
@@ -37,86 +38,108 @@ public class I2cBus implements AutoCloseable {
     private final Arena arena;
 
     /**
-     * Handle to the I2C device. Size is determined by sizer.c during build.
+     * Handle to the I2C device, sized by the sizer during the build process.
      */
     private final MemorySegment handle;
 
     /**
-     * Pre-allocated buffer for i2c_msg structures (2 messages).
-     */
-    private final MemorySegment msgBuffer;
-
-    /**
-     * Pre-allocated data buffer for I/O operations.
+     * Pre-allocated native data buffer for I/O and message structures.
      */
     private final MemorySegment dataBuffer;
 
     /**
-     * Cached struct size for i2c_msg.
+     * Pre-allocated array of two i2c_msg structures for combined transactions (Write/Read).
      */
-    private static final long MSG_SIZE = i2c_msg.layout().byteSize();
+    private final MemorySegment msgs;
 
     /**
-     * Linux I2C Read flag.
+     * Maximum supported length for single I/O operations defined by the caller.
      */
-    private static final short I2C_M_RD = 0x0001;
+    private final int maxSupportedLen;
 
     /**
-     * Initialize I2C bus.
+     * Initialize I2C bus with explicit configuration.
      *
-     * @param device I2C device path (e.g., "/dev/i2c-1").
+     * @param device     I2C device path (e.g., "/dev/i2c-1").
+     * @param bufferSize Maximum size (in bytes) for native I/O operations.
+     * @throws RuntimeException If the native periphery library fails to open the device.
      */
-    public I2cBus(final String device) {
+    public I2cBus(final String device, final int bufferSize) {
         this.arena = Arena.ofShared();
-        // Use the generated layout - no guessing!
         this.handle = arena.allocate(i2c_handle.layout());
-        this.msgBuffer = arena.allocate(MSG_SIZE * 2);
-        this.dataBuffer = arena.allocate(256);
+        this.maxSupportedLen = bufferSize;
+        this.dataBuffer = arena.allocate(bufferSize);
+        // Allocate space for 2 i2c_msg structs for combined Write+Read transfers
+        this.msgs = arena.allocate(i2c_msg.layout().byteSize() * 2);
 
-        final var path = arena.allocateFrom(device);
-        if (Periphery.i2c_open(handle, path) < 0) {
-            // Using getString(0) for null-terminated strings in modern FFM
+        final var deviceSeg = arena.allocateFrom(device);
+        if (Periphery.i2c_open(handle, deviceSeg) < 0) {
             final var error = Periphery.i2c_errmsg(handle).getString(0);
-            throw new RuntimeException(String.format("Failed to open %s: %s", device, error));
+            throw new RuntimeException("Failed to open %s: %s".formatted(device, error));
         }
-        log.atDebug().log("I2C bus {} initialized", device);
+        log.atDebug().log("I2C bus {} opened with {} byte buffer", device, bufferSize);
     }
 
     /**
-     * Helper to set i2c_msg fields.
+     * Writes an 8-bit value to a device register.
      *
-     * @param msgIdx Index in msgBuffer.
-     * @param addr Device address.
-     * @param flags I2C flags.
-     * @param buf Native data buffer.
-     * @param len Length of transfer.
+     * @param address I2C device address.
+     * @param reg     Register address.
+     * @param value   Value to write.
+     * @return 0 on success, or negative error code.
      */
-    private void setMsg(final int msgIdx, final short addr, final short flags,
-            final MemorySegment buf, final int len) {
-        final var msg = msgBuffer.asSlice(msgIdx * MSG_SIZE, MSG_SIZE);
-        i2c_msg.addr(msg, addr);
-        i2c_msg.flags(msg, flags);
-        i2c_msg.len(msg, (short) len);
-        i2c_msg.buf(msg, buf);
-    }
-
-    /**
-     * Read from 8-bit register into byte array.
-     *
-     * @param addr Peripheral address.
-     * @param reg Register address.
-     * @param buf Target buffer.
-     * @return 0 on success.
-     */
-    public int readReg8(final short addr, final short reg, final byte[] buf) {
+    public int writeReg8(final short address, final short reg, final byte value) {
         lock.lock();
         try {
+            // Write 2 bytes: [Register, Value]
             dataBuffer.set(ValueLayout.JAVA_BYTE, 0, (byte) reg);
-            setMsg(0, addr, (short) 0, dataBuffer, 1);
-            setMsg(1, addr, I2C_M_RD, dataBuffer.asSlice(1, buf.length), buf.length);
+            dataBuffer.set(ValueLayout.JAVA_BYTE, 1, value);
 
-            final var ret = Periphery.i2c_transfer(handle, msgBuffer, 2);
-            if (ret == 0) {
+            // Configure single write message
+            final var msg = msgs.asSlice(0, i2c_msg.layout().byteSize());
+            i2c_msg.addr(msg, address);
+            i2c_msg.flags(msg, (short) 0);
+            i2c_msg.len(msg, (short) 2);
+            i2c_msg.buf(msg, dataBuffer);
+
+            return Periphery.i2c_transfer(handle, msgs, 1);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Reads multiple bytes from a device register using a combined transfer.
+     *
+     * @param address I2C device address.
+     * @param reg     Register address.
+     * @param buf     Target Java byte array.
+     * @return 0 on success, or negative error code.
+     */
+    public int readReg8(final short address, final short reg, final byte[] buf) {
+        if (buf.length > maxSupportedLen) {
+            log.error("Read size {} exceeds native buffer capacity {}", buf.length, maxSupportedLen);
+            return -1;
+        }
+        lock.lock();
+        try {
+            // Message 1: Write Register Address
+            dataBuffer.set(ValueLayout.JAVA_BYTE, 0, (byte) reg);
+            final var msgWrite = msgs.asSlice(0, i2c_msg.layout().byteSize());
+            i2c_msg.addr(msgWrite, address);
+            i2c_msg.flags(msgWrite, (short) 0);
+            i2c_msg.len(msgWrite, (short) 1);
+            i2c_msg.buf(msgWrite, dataBuffer);
+
+            // Message 2: Read Data (using dataBuffer offset to avoid collision)
+            final var msgRead = msgs.asSlice(i2c_msg.layout().byteSize(), i2c_msg.layout().byteSize());
+            i2c_msg.addr(msgRead, address);
+            i2c_msg.flags(msgRead, (short) 0x0001); // I2C_M_RD
+            i2c_msg.len(msgRead, (short) buf.length);
+            i2c_msg.buf(msgRead, dataBuffer.asSlice(1));
+
+            final var ret = Periphery.i2c_transfer(handle, msgs, 2);
+            if (ret >= 0) {
                 MemorySegment.copy(dataBuffer, ValueLayout.JAVA_BYTE, 1, buf, 0, buf.length);
             }
             return ret;
@@ -126,35 +149,15 @@ public class I2cBus implements AutoCloseable {
     }
 
     /**
-     * Write value to 8-bit register.
+     * Returns a string representation of the I2C bus state.
      *
-     * @param addr Peripheral address.
-     * @param reg Register address.
-     * @param value Value.
-     * @return 0 on success.
-     */
-    public int writeReg8(final short addr, final short reg, final short value) {
-        lock.lock();
-        try {
-            dataBuffer.set(ValueLayout.JAVA_BYTE, 0, (byte) reg);
-            dataBuffer.set(ValueLayout.JAVA_BYTE, 1, (byte) value);
-            setMsg(0, addr, (short) 0, dataBuffer, 2);
-            return Periphery.i2c_transfer(handle, msgBuffer, 1);
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    /**
-     * Get string representation of the native I2C state.
-     *
-     * @return Handle description string.
+     * @return Native handle state description.
      */
     @Override
     public String toString() {
         lock.lock();
-        try (final var localArena = Arena.ofConfined()) {
-            final var strBuf = localArena.allocate(128);
+        try (final var local = Arena.ofConfined()) {
+            final var strBuf = local.allocate(256);
             Periphery.i2c_tostring(handle, strBuf, strBuf.byteSize());
             return strBuf.getString(0);
         } finally {
@@ -163,7 +166,7 @@ public class I2cBus implements AutoCloseable {
     }
 
     /**
-     * Close native handle and arena.
+     * Closes the I2C bus and releases native memory segments.
      */
     @Override
     public void close() {

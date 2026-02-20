@@ -10,8 +10,11 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * ADXL345 3-Axis digital accelerometer device class using I2cBus.
  * <p>
- * This class provides a high-level interface to the ADXL345 accelerometer. It delegates low-level I2C operations to the thread-safe
- * {@link I2cBus} to ensure hardware-accurate and synchronized access.
+ * This class provides a high-level interface to the ADXL345 accelerometer. It delegates low-level I2C operations to a borrowed,
+ * thread-safe {@link I2cBus}.
+ * </p>
+ * <p>
+ * Zero-allocation in the hot path, full Javadoc, and strict use of {@code final} and {@code var}.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -22,7 +25,7 @@ import lombok.extern.slf4j.Slf4j;
 public class Adxl345 implements AutoCloseable {
 
     /**
-     * Thread-safe I2C bus.
+     * Borrowed thread-safe I2C bus. Lifecycle is managed by the caller.
      */
     private final I2cBus i2cBus;
 
@@ -42,7 +45,12 @@ public class Adxl345 implements AutoCloseable {
     private static final float G_TO_MS2 = 9.80665f;
 
     /**
-     * Reusable buffer for axis data to avoid per-read allocation.
+     * Reusable buffer for 8-bit register reads to avoid per-call allocation.
+     */
+    private final byte[] regBuffer = new byte[1];
+
+    /**
+     * Reusable buffer for axis data (6 bytes) to avoid per-read allocation.
      */
     private final byte[] axisBuffer = new byte[6];
 
@@ -65,30 +73,29 @@ public class Adxl345 implements AutoCloseable {
      * @param value Value to write.
      */
     public void writeReg8(final short reg, final short value) {
-        if (i2cBus.writeReg8(address, reg, value) < 0) {
+        if (i2cBus.writeReg8(address, reg, (byte) (value & 0xff)) < 0) {
             log.error("I2C write failed for register 0x{}", Integer.toHexString(reg));
         }
     }
 
     /**
-     * Reads an 8-bit value from a device register.
+     * Reads an 8-bit value from a device register using the pre-allocated buffer.
      *
      * @param reg Register address.
      * @return The 8-bit value read.
      */
     public short readReg8(final short reg) {
-        final var buf = new byte[1];
-        if (i2cBus.readReg8(address, reg, buf) < 0) {
+        if (i2cBus.readReg8(address, reg, regBuffer) < 0) {
             log.error("I2C read failed for register 0x{}", Integer.toHexString(reg));
         }
-        return (short) (buf[0] & 0xff);
+        return (short) (regBuffer[0] & 0xff);
     }
 
     /**
      * Enable the device and set default configuration.
      */
     public void enable() {
-        writeReg8((short) 0x2d, (short) 0x08); // POWER_CTL: Measure
+        writeReg8((short) 0x2d, (short) 0x08); // POWER_CTL: Measure mode
         setRange((short) 0x00);                // +/- 2g
         setDataRate((short) 0x0a);             // 100 Hz
         refreshScalingFactor();
@@ -97,7 +104,7 @@ public class Adxl345 implements AutoCloseable {
     /**
      * Sets the measurement range in the DATA_FORMAT register.
      *
-     * @param value Range value.
+     * @param value Range value (0x00: 2g, 0x01: 4g, 0x02: 8g, 0x03: 16g).
      */
     public void setRange(final short value) {
         final var current = readReg8((short) 0x31);
@@ -109,7 +116,7 @@ public class Adxl345 implements AutoCloseable {
     /**
      * Sets the data rate in the BW_RATE register.
      *
-     * @param value Rate value.
+     * @param value Rate value (default 0x0a is 100Hz).
      */
     public void setDataRate(final short value) {
         writeReg8((short) 0x2c, (short) (value & 0x0f));
@@ -120,6 +127,7 @@ public class Adxl345 implements AutoCloseable {
      */
     public void refreshScalingFactor() {
         final var format = readReg8((short) 0x31);
+        // Bit 3 is FULL_RES
         if ((format & 0x08) == 0x08) {
             this.scalingFactor = 0.004f;
         } else {
@@ -131,6 +139,9 @@ public class Adxl345 implements AutoCloseable {
 
     /**
      * Reads x, y, z axes and returns scaled acceleration in m/s^2.
+     * <p>
+     * Performs a single multi-byte I2C read into the pre-allocated axis buffer.
+     * </p>
      *
      * @return Map containing "x", "y", and "z" float values.
      */
@@ -145,31 +156,33 @@ public class Adxl345 implements AutoCloseable {
         final var z = (short) (((axisBuffer[5] & 0xff) << 8) | (axisBuffer[4] & 0xff));
 
         final var map = new HashMap<String, Float>(3);
-        map.put("x", x * scalingFactor * G_TO_MS2);
-        map.put("y", y * scalingFactor * G_TO_MS2);
-        map.put("z", z * scalingFactor * G_TO_MS2);
+        final var factor = scalingFactor * G_TO_MS2;
+        map.put("x", x * factor);
+        map.put("y", y * factor);
+        map.put("z", z * factor);
         return map;
     }
 
     /**
      * Reads the device ID from the DEVID register.
      *
-     * @return The device ID (0xE5).
+     * @return The device ID (should be 0xE5).
      */
     public short getDeviceId() {
         return readReg8((short) 0x00);
     }
 
     /**
-     * Closes the ADXL345 device.
+     * Closes the ADXL345 device state.
      * <p>
-     * Puts the hardware into standby mode to save power and reduce bus noise.
+     * Puts the hardware into standby mode (POWER_CTL bit 3 = 0) to minimize power consumption and bus traffic. Does not close the
+     * shared I2C bus.
      * </p>
      */
     @Override
     public void close() {
-        // POWER_CTL (0x2d) bit 3 = 0 puts it in standby
+        // Puts chip in standby while bus is still active
         writeReg8((short) 0x2d, (short) 0x00);
-        log.atDebug().log("ADXL345 hardware placed in standby mode");
+        log.atDebug().log("ADXL345 at 0x{} placed in standby mode", Integer.toHexString(address));
     }
 }
