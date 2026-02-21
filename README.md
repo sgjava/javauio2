@@ -25,7 +25,7 @@ While the original Java UIO set the standard for JNI-based IO, Java UIO 2 moves 
 * `./setup-permissions.sh` (only required on ARM)
 * `sudo reboot`
 * `cd ~/javauio2`
-* `mvn clean install`
+* `mvn clean install` (X86_64 only)
 * `-P arm64` (profile for aarch64)
 * `-P arm32` (profile for armhf, but no runtime linker yet)
 
