@@ -35,10 +35,10 @@ public class SysLedBlink implements Callable<Integer> {
     }
 
     /**
-     * System LED name as found in /sys/class/leds/. Default set to common Pine A64/NanoPi PWR LED.
+     * System LED name as found in /sys/class/leds/. Default set to Raspberry PI ACT (green led).
      */
     @Option(names = {"-n", "--name"}, description = "System LED name, ${DEFAULT-VALUE} by default.",
-            defaultValue = "nanopi:green:pwr")
+            defaultValue = "ACT")
     private String name;
 
     /**
