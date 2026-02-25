@@ -69,9 +69,3 @@ Java UIO 2 provides a forward-looking strategy. While FFM is our primary focus f
 | **X86_64** | ✅ Supported | ✅ **Recommended** |
 
 *Note: As of JDK 25, X86_32 is no longer supported. Java UIO 2 focuses on high-performance 64-bit paths while maintaining a path for ARM32.*
-
-## 🚧 Work in Progress
-This is the beginning of the FFM-native ecosystem for Java. The core infrastructure is stable, and the following modules are currently being ported:
-* ✅  **Periphery Core**: GPIO, I2C, SPI, LED, PWM, and Serial.
-* ✅  **u8g2**: High-performance port for monochrome displays.
-* **Real-time Sensors**: Optimized drivers for I2C/SPI sensors using zero-copy FFM memory segments.
