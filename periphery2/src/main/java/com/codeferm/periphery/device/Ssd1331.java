@@ -18,8 +18,8 @@ import org.periphery.spi_handle;
 /**
  * SSD1331 96x64 RGB OLED driver using Java Foreign Function & Memory (FFM) API.
  * <p>
- * This class provides a high-level interface for the SSD1331 controller over SPI. It handles hardware initialization, command/data
- * toggling via GPIO, and optimized image rendering. Includes Hardware Acceleration (GAC) for lines, rects, and scrolling.
+ * This driver provides a high-performance interface to the SSD1331 controller, utilizing {@link MemorySegment} for zero-copy data
+ * transfers and supporting all Hardware Graphic Acceleration Commands (GAC).
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -150,11 +150,6 @@ public class Ssd1331 implements AutoCloseable {
     public static final byte COPY_WINDOW = (byte) 0x23;
 
     /**
-     * GAC: Dim window.
-     */
-    public static final byte DIM_WINDOW = (byte) 0x24;
-
-    /**
      * GAC: Clear window.
      */
     public static final byte CLEAR_WINDOW = (byte) 0x25;
@@ -182,6 +177,7 @@ public class Ssd1331 implements AutoCloseable {
     /**
      * Shared arena for native memory segment management.
      */
+    @Getter
     private final Arena arena;
 
     /**
@@ -212,12 +208,12 @@ public class Ssd1331 implements AutoCloseable {
     private final int height = 64;
 
     /**
-     * Initialize hardware with SPI and GPIO handles. Handles direction and setup logic internally.
+     * Initialize hardware with SPI and GPIO handles via FFM.
      *
-     * @param device SPI device path (e.g., /dev/spidev0.0).
-     * @param mode SPI mode (typically 3).
-     * @param speed SPI speed in Hz (e.g., 500000).
-     * @param gpioDevice GPIO chip path (e.g., /dev/gpiochip0).
+     * @param device SPI device path.
+     * @param mode SPI mode.
+     * @param speed SPI speed in Hz.
+     * @param gpioDevice GPIO chip path.
      * @param dcPin Data/Command BCM pin number.
      * @param resPin Reset BCM pin number.
      */
@@ -227,8 +223,10 @@ public class Ssd1331 implements AutoCloseable {
         this.spiHandle = arena.allocate(spi_handle.layout());
         this.dcHandle = arena.allocate(gpio_handle.layout());
         this.resHandle = arena.allocate(gpio_handle.layout());
+
         final var cDevice = arena.allocateFrom(device);
         final var cGpioDev = arena.allocateFrom(gpioDevice);
+
         if (Periphery.spi_open(spiHandle, cDevice, mode, speed) < 0) {
             throw new RuntimeException("SPI open failed");
         }
@@ -242,40 +240,47 @@ public class Ssd1331 implements AutoCloseable {
     }
 
     /**
-     * Sends command bytes to the controller with the DC pin driven LOW.
+     * Sends command bytes to the controller (DC pin LOW).
      *
-     * @param data Command byte array to transfer.
+     * @param data Command array.
      */
     public final void writeCommand(final byte[] data) {
         Periphery.gpio_write(dcHandle, false);
         final var cData = arena.allocateFrom(ValueLayout.JAVA_BYTE, data);
         if (Periphery.spi_transfer(spiHandle, cData, cData, data.length) < 0) {
-            throw new RuntimeException("SPI Command transfer failed");
+            throw new RuntimeException("SPI Command failed");
         }
     }
 
     /**
-     * Sends data bytes to the controller with the DC pin driven HIGH.
+     * Sends data bytes (pixels) directly from a {@link MemorySegment} (DC pin HIGH).
      *
-     * @param data Data byte array (pixels) to transfer.
+     * @param segment Native segment containing pixel data.
+     */
+    public final void writeData(final MemorySegment segment) {
+        Periphery.gpio_write(dcHandle, true);
+        if (Periphery.spi_transfer(spiHandle, segment, segment, segment.byteSize()) < 0) {
+            throw new RuntimeException("SPI Data Segment transfer failed");
+        }
+    }
+
+    /**
+     * Sends data bytes (pixels) from a Java array (DC pin HIGH).
+     *
+     * @param data Pixel data array.
      */
     public final void writeData(final byte[] data) {
-        Periphery.gpio_write(dcHandle, true);
         final var cData = arena.allocateFrom(ValueLayout.JAVA_BYTE, data);
-        if (Periphery.spi_transfer(spiHandle, cData, cData, data.length) < 0) {
-            throw new RuntimeException("SPI Data transfer failed");
-        }
+        writeData(cData);
     }
 
     /**
-     * Performs the hardware-specific reset and configuration sequence.
+     * Performs hardware reset and configuration sequence.
      */
     public final void setup() {
         try {
             Periphery.gpio_write(dcHandle, false);
             Periphery.gpio_write(resHandle, true);
-            final var sync = arena.allocate(ValueLayout.JAVA_BYTE, (byte) 0);
-            Periphery.spi_transfer(spiHandle, sync, sync, 1);
             TimeUnit.MILLISECONDS.sleep(100);
             Periphery.gpio_write(resHandle, false);
             TimeUnit.MILLISECONDS.sleep(500);
@@ -299,13 +304,14 @@ public class Ssd1331 implements AutoCloseable {
             writeCommand(new byte[]{SET_CONTRAST_C, (byte) 0xFF});
             writeCommand(new byte[]{DEACTIVATE_SCROLLING});
             writeCommand(new byte[]{DISPLAY_ON});
+            clear();
         } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();
         }
     }
 
     /**
-     * Clears the current display contents via hardware command.
+     * Clears the display via GAC command.
      */
     public final void clear() {
         writeCommand(new byte[]{CLEAR_WINDOW, (byte) 0, (byte) 0, (byte) (width - 1), (byte) (height - 1)});
@@ -366,11 +372,11 @@ public class Ssd1331 implements AutoCloseable {
     /**
      * Configures and starts hardware scrolling.
      *
-     * @param horizontal How many columns to shift per step (positive or negative).
-     * @param startRow The starting row address (0-63).
-     * @param rowCount How many rows to include in the scrolling area.
-     * @param vertical How many rows to shift per step (vertical offset).
-     * @param interval Frame interval between steps (0x00 is fastest).
+     * @param horizontal How many columns to shift per step.
+     * @param startRow Starting row address.
+     * @param rowCount Number of rows to scroll.
+     * @param vertical How many rows to shift per step.
+     * @param interval Frame interval between steps.
      */
     public final void setupScroll(final int horizontal, final int startRow,
             final int rowCount, final int vertical, final int interval) {
@@ -381,16 +387,16 @@ public class Ssd1331 implements AutoCloseable {
     }
 
     /**
-     * Stops all hardware scrolling.
+     * Stops hardware scrolling.
      */
     public final void stopScroll() {
         writeCommand(new byte[]{DEACTIVATE_SCROLLING});
     }
 
     /**
-     * Maps a Java2D BufferedImage to the SSD1331's 16-bit RGB565 format.
+     * Maps a {@link BufferedImage} to RGB565 and sends to display.
      *
-     * @param image BufferedImage (TYPE_INT_RGB) to render.
+     * @param image BufferedImage to render.
      */
     public final void drawImage(final BufferedImage image) {
         writeCommand(new byte[]{SET_COLUMN_ADDRESS, (byte) 0, (byte) (width - 1)});
@@ -399,10 +405,7 @@ public class Ssd1331 implements AutoCloseable {
         final var output = new byte[pixels.length * 2];
         for (var i = 0; i < pixels.length; i++) {
             final var p = pixels[i];
-            final var r = (p >> 19) & 0x1F;
-            final var g = (p >> 10) & 0x3F;
-            final var b = (p >> 3) & 0x1F;
-            final var packed = (r << 11) | (g << 5) | b;
+            final var packed = (((p >> 19) & 0x1F) << 11) | (((p >> 10) & 0x3F) << 5) | ((p >> 3) & 0x1F);
             output[i * 2] = (byte) (packed >> 8);
             output[i * 2 + 1] = (byte) (packed & 0xFF);
         }
@@ -411,13 +414,12 @@ public class Ssd1331 implements AutoCloseable {
     }
 
     /**
-     * Safely closes native resources and powers down the display.
+     * Safely closes native resources.
      */
     @Override
     public final void close() {
         try (arena) {
             writeCommand(new byte[]{DISPLAY_OFF});
-            clear();
             Periphery.spi_close(spiHandle);
             Periphery.gpio_close(dcHandle);
             Periphery.gpio_close(resHandle);

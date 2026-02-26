@@ -15,8 +15,8 @@ import picocli.CommandLine.Option;
 /**
  * Base CLI for SSD1331 provides hardware initialization and a Graphics2D canvas.
  * <p>
- * Updated for FFM-based driver and Raspberry Pi pin defaults. Since the driver performs setup in the constructor, this class
- * focuses on Java2D buffer management and life-cycle.
+ * This class serves as the application base for SSD1331 demos. It handles native library loading via a static block and manages the
+ * life-cycle of FFM-based hardware resources.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -27,6 +27,9 @@ import picocli.CommandLine.Option;
 @Slf4j
 public class Base implements Callable<Integer> {
 
+    /**
+     * Load native libraries once for all inheriting applications.
+     */
     static {
         NativeLoader.load();
     }
@@ -56,13 +59,13 @@ public class Base implements Callable<Integer> {
     private String gpioDevice = "/dev/gpiochip0";
 
     /**
-     * DC line option. Defaulting to BCM 24 (Physical pin 18).
+     * DC (Data/Command) line option. Defaulting to BCM 24.
      */
     @Option(names = {"-dc", "--dc-line"}, description = "DC line, ${DEFAULT-VALUE} by default.")
     private int dc = 24;
 
     /**
-     * RES line option. Defaulting to BCM 25 (Physical pin 22).
+     * RES (Reset) line option. Defaulting to BCM 25.
      */
     @Option(names = {"-res", "--res-line"}, description = "RES line, ${DEFAULT-VALUE} by default.")
     private int res = 25;
@@ -70,8 +73,8 @@ public class Base implements Callable<Integer> {
     /**
      * Target frames per second.
      */
-    @Option(names = {"-f", "--fps"}, description = "Target frames per second", defaultValue = "60")
-    private int fps;
+    @Option(names = {"-f", "--fps"}, description = "Target frames per second, ${DEFAULT-VALUE} by default.")
+    private int fps = 60;
 
     /**
      * Milliseconds to sleep for text and graphics.
@@ -116,15 +119,19 @@ public class Base implements Callable<Integer> {
     @Override
     public Integer call() throws Exception {
         log.info("Initializing SSD1331 on {} (speed: {}Hz)", device, speed);
-        // Driver constructor now handles setup() and clear() logic
+
+        // FFM driver initialization
         oled = new Ssd1331(device, mode, speed, gpioDevice, dc, res);
+
         // Cache dimensions locally
         width = oled.getWidth();
         height = oled.getHeight();
+
         // Initialize Java2D resources using optimized TYPE_INT_RGB
         final var bufferedImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
         this.image = bufferedImage;
         this.g2d = bufferedImage.createGraphics();
+
         log.info("Display initialized: {}x{}", width, height);
         return 0;
     }
