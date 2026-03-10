@@ -19,7 +19,8 @@ import org.periphery.spi_handle;
  * SSD1331 96x64 RGB OLED driver using Java Foreign Function & Memory (FFM) API.
  * <p>
  * This driver provides a high-performance interface to the SSD1331 controller, utilizing {@link MemorySegment} for zero-copy data
- * transfers and supporting all Hardware Graphic Acceleration Commands (GAC).
+ * transfers and supporting all Hardware Graphic Acceleration Commands (GAC). Optimized with a zero-allocation strategy to prevent
+ * memory thrashing and OutOfMemoryErrors in tight loops.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -196,6 +197,16 @@ public class Ssd1331 implements AutoCloseable {
     private final MemorySegment resHandle;
 
     /**
+     * Reusable native segment for SPI commands to prevent heap thrashing.
+     */
+    private final MemorySegment commandSegment;
+
+    /**
+     * Reusable native segment for full-frame image data.
+     */
+    private final MemorySegment imageSegment;
+
+    /**
      * SSD1331 display width in pixels.
      */
     @Getter
@@ -224,8 +235,13 @@ public class Ssd1331 implements AutoCloseable {
         this.dcHandle = arena.allocate(gpio_handle.layout());
         this.resHandle = arena.allocate(gpio_handle.layout());
 
-        final var cDevice = arena.allocateFrom(device);
-        final var cGpioDev = arena.allocateFrom(gpioDevice);
+        // Pre-allocate command buffer (64 bytes is plenty for any GAC command)
+        this.commandSegment = arena.allocate(64);
+        // Pre-allocate image buffer (width * height * 2 bytes for RGB565)
+        this.imageSegment = arena.allocate(width * height * 2);
+
+        final MemorySegment cDevice = arena.allocateFrom(device);
+        final MemorySegment cGpioDev = arena.allocateFrom(gpioDevice);
 
         if (Periphery.spi_open(spiHandle, cDevice, mode, speed) < 0) {
             throw new RuntimeException("SPI open failed");
@@ -240,14 +256,15 @@ public class Ssd1331 implements AutoCloseable {
     }
 
     /**
-     * Sends command bytes to the controller (DC pin LOW).
+     * Sends command bytes using the pre-allocated commandSegment.
      *
      * @param data Command array.
      */
     public final void writeCommand(final byte[] data) {
         Periphery.gpio_write(dcHandle, false);
-        final var cData = arena.allocateFrom(ValueLayout.JAVA_BYTE, data);
-        if (Periphery.spi_transfer(spiHandle, cData, cData, data.length) < 0) {
+        // Copy heap data to pre-allocated native memory
+        MemorySegment.copy(data, 0, commandSegment, ValueLayout.JAVA_BYTE, 0, data.length);
+        if (Periphery.spi_transfer(spiHandle, commandSegment, commandSegment, data.length) < 0) {
             throw new RuntimeException("SPI Command failed");
         }
     }
@@ -265,12 +282,13 @@ public class Ssd1331 implements AutoCloseable {
     }
 
     /**
-     * Sends data bytes (pixels) from a Java array (DC pin HIGH).
+     * Sends data bytes (pixels) from a Java array (DC pin HIGH). Note: This still allocates a temporary segment; use
+     * writeData(MemorySegment) in hot loops.
      *
      * @param data Pixel data array.
      */
     public final void writeData(final byte[] data) {
-        final var cData = arena.allocateFrom(ValueLayout.JAVA_BYTE, data);
+        final MemorySegment cData = arena.allocateFrom(ValueLayout.JAVA_BYTE, data);
         writeData(cData);
     }
 
@@ -394,22 +412,23 @@ public class Ssd1331 implements AutoCloseable {
     }
 
     /**
-     * Maps a {@link BufferedImage} to RGB565 and sends to display.
+     * Maps a {@link BufferedImage} to RGB565 and sends to display via pre-allocated segment.
      *
      * @param image BufferedImage to render.
      */
     public final void drawImage(final BufferedImage image) {
         writeCommand(new byte[]{SET_COLUMN_ADDRESS, (byte) 0, (byte) (width - 1)});
         writeCommand(new byte[]{SET_ROW_ADDRESS, (byte) 0, (byte) (height - 1)});
-        final var pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
-        final var output = new byte[pixels.length * 2];
-        for (var i = 0; i < pixels.length; i++) {
-            final var p = pixels[i];
-            final var packed = (((p >> 19) & 0x1F) << 11) | (((p >> 10) & 0x3F) << 5) | ((p >> 3) & 0x1F);
-            output[i * 2] = (byte) (packed >> 8);
-            output[i * 2 + 1] = (byte) (packed & 0xFF);
+
+        final int[] pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
+        for (int i = 0; i < pixels.length; i++) {
+            final int p = pixels[i];
+            // Pack RGB888 to RGB565 and swap to Big-Endian for SPI
+            final short packed = (short) ((((p >> 19) & 0x1F) << 11) | (((p >> 10) & 0x3F) << 5) | ((p >> 3) & 0x1F));
+            imageSegment.set(ValueLayout.JAVA_SHORT_UNALIGNED, i * 2, Short.reverseBytes(packed));
         }
-        writeData(output);
+
+        writeData(imageSegment);
         writeCommand(new byte[]{NO_OP});
     }
 
@@ -418,11 +437,15 @@ public class Ssd1331 implements AutoCloseable {
      */
     @Override
     public final void close() {
-        try (arena) {
+        try {
             writeCommand(new byte[]{DISPLAY_OFF});
+        } catch (final Exception e) {
+            log.error("Error turning off display during close: {}", e.getMessage());
+        } finally {
             Periphery.spi_close(spiHandle);
             Periphery.gpio_close(dcHandle);
             Periphery.gpio_close(resHandle);
+            arena.close();
         }
     }
 }
