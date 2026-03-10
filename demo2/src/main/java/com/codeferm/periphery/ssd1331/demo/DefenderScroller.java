@@ -25,7 +25,7 @@ import picocli.CommandLine.Command;
 @Command(
         name = "DefenderScroller",
         mixinStandardHelpOptions = true,
-        version = "1.1.0",
+        version = "1.0.0",
         description = "GAC-based bi-directional terrain scroller with ship."
 )
 public class DefenderScroller extends Base {
