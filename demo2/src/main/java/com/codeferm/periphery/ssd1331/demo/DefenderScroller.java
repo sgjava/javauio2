@@ -34,12 +34,10 @@ public class DefenderScroller extends Base {
      * Random number generator for terrain generation and direction logic.
      */
     private final Random random = new Random();
-
     /**
      * Height map of the terrain (96 columns).
      */
     private final int[] terrain = new int[96];
-
     /**
      * Scroll direction: -1 for Left (Ship faces Right), 1 for Right (Ship faces Left).
      */
@@ -49,22 +47,18 @@ public class DefenderScroller extends Base {
      * Fixed horizontal anchor point for the ship.
      */
     private final int shipX = 48;
-
     /**
      * Buffer width for erasing the ship's trail (includes ship and flame).
      */
     private final int clearWidth = 16;
-
     /**
      * Vertical position of the ship in sub-pixel coordinates.
      */
     private double shipY = 25.0;
-
     /**
      * Desired distance between the ship and the peak of the hills.
      */
     private final int hoverHeight = 15;
-
     /**
      * Smoothing factor for vertical tracking (0.15 = 15% move toward target per frame).
      */
@@ -148,7 +142,6 @@ public class DefenderScroller extends Base {
         final var r = 0;
         final var g = 63;
         final var b = 63; // Cyan ship
-
         if (dir < 0) {
             // Face Right
             oled.drawLine(x - 6, y - 3, x + 6, y, r, g, b);
@@ -172,40 +165,58 @@ public class DefenderScroller extends Base {
      * Primary loop for the demonstration.
      *
      * @param oled The SSD1331 hardware device.
-     * @throws Exception If SPI communication or thread sleep is interrupted.
+     * @throws Exception If SPI communication fails.
      */
     public final void runDemo(final Ssd1331 oled) throws Exception {
-        log.info("Starting Defender Scroller (GAC Standards Mode)...");
+        log.info("Starting Defender Scroller...");
         oled.setup();
         // Hardware remap for RGB mode and normal display
         oled.writeCommand(new byte[]{(byte) 0xA4, Ssd1331.SET_REMAP, (byte) 0x72});
         oled.clear();
         initTerrain();
+
         // Perform initial draw of all columns
         for (var x = 0; x < 96; x++) {
             drawColumn(oled, x);
         }
-        while (!Thread.currentThread().isInterrupted()) {
+
+        // Use isRunning() from Base and check thread interrupt status
+        while (isRunning() && !Thread.currentThread().isInterrupted()) {
             final var startTime = System.currentTimeMillis();
+
             // 1. Hardware world scroll
             scroll(oled, velocity);
+
             // 2. Erase ship area using background data (prevents smearing)
             for (var x = shipX - clearWidth; x <= shipX + clearWidth; x++) {
                 drawColumn(oled, x);
             }
+
             // 3. Terrain following physics (Lerp)
             final var targetAltitudeY = 63 - terrain[shipX] - hoverHeight;
             shipY += (targetAltitudeY - shipY) * lerpFactor;
+
             // 4. Render ship at calculated position
             drawShip(oled, shipX, (int) shipY, velocity);
-            // 5. Randomized direction change (1 in 500 chance)
+
+            // 5. Randomized direction change
             if (random.nextInt(500) == 0) {
                 velocity *= -1;
             }
+
             // 6. Throttle loop to maintain ~50 FPS
             final var elapsedTime = System.currentTimeMillis() - startTime;
-            if (elapsedTime < 20) {
-                TimeUnit.MILLISECONDS.sleep(20 - elapsedTime);
+            final var targetDelay = 1000 / getFps(); // Use Base FPS
+
+            if (elapsedTime < targetDelay) {
+                try {
+                    TimeUnit.MILLISECONDS.sleep(targetDelay - elapsedTime);
+                } catch (final InterruptedException e) {
+                    // Restore interrupt status so the loop condition fails
+                    Thread.currentThread().interrupt();
+                    log.debug("Interrupted during sleep, exiting loop.");
+                    break;
+                }
             }
         }
     }

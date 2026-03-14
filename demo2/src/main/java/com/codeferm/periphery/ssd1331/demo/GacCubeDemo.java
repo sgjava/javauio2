@@ -208,10 +208,11 @@ public class GacCubeDemo extends Base {
     }
 
     /**
-     * Main execution loop for the 3D demo.
+     * Renders multiple cubes using GAC hardware acceleration. Uses a signal-aware loop to allow for clean shutdown via Base
+     * timer/hook.
      *
      * @param oled SSD1331 driver instance.
-     * @throws Exception On SPI or thread errors.
+     * @throws Exception on hardware failure.
      */
     public final void runDemo(final Ssd1331 oled) throws Exception {
         log.info("Starting Multi-Cube GAC 3D Demo (High Standards)...");
@@ -229,7 +230,8 @@ public class GacCubeDemo extends Base {
             new Cube(11, 0, 63, 63, random) // Cyan
         };
 
-        while (!Thread.currentThread().isInterrupted()) {
+        // Check both the volatile running flag and the thread interrupt status
+        while (isRunning() && !Thread.currentThread().isInterrupted()) {
             final var startTime = System.currentTimeMillis();
 
             for (final var cube : cubes) {
@@ -241,8 +243,18 @@ public class GacCubeDemo extends Base {
 
             // Maintain stable frame rate (~60 FPS)
             final var elapsedTime = System.currentTimeMillis() - startTime;
-            if (elapsedTime < 16) {
-                TimeUnit.MILLISECONDS.sleep(16 - elapsedTime);
+            final var targetDelay = 1000 / getFps();
+
+            if (elapsedTime < targetDelay) {
+                try {
+                    TimeUnit.MILLISECONDS.sleep(targetDelay - elapsedTime);
+                } catch (final InterruptedException e) {
+                    // Re-assert interrupt so the while loop terminates naturally
+                    Thread.currentThread().interrupt();
+                    // Log the event concisely and exit the loop
+                    log.debug("Demo loop interrupted during sleep, exiting gracefully");
+                    break;
+                }
             }
         }
     }
