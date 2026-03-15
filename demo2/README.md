@@ -9,6 +9,45 @@ code. Just pass in --help to get list of command line arguments. Make sure demo2
 
 * `java -cp "demo2-1.0.0-SNAPSHOT-jar-with-dependencies.jar" --enable-native-access=ALL-UNNAMED com.codeferm.periphery.demo.LedBlink --help`
 
+## SSD1331 Java Demos: Rendering Architectures
+
+This showcases high-performance OLED manipulation using the **Java Foreign Function & Memory (FFM) API**. Each demo utilizes a different architectural approach to balance CPU load, bus traffic, and graphical complexity. All demos support a **unified snapshot system** that leverages a "software-mirroring" technique to capture hardware states without impacting real-time performance.
+
+![SpaceInvaders](images/SpaceInvaders1331.png)
+
+![WireframeCube](images/WireframeCube1331.png)
+
+### 1. Java2D Demos (Buffered Graphics)
+These demos utilize the standard `java.awt.Graphics2D` API. This is the most flexible approach, allowing for complex vector graphics, anti-aliasing, and image manipulation.
+* **How it works**: Frames are rendered into a `BufferedImage` in system RAM. The driver then performs a high-speed conversion of the 32-bit `INT_ARGB` buffer into a 16-bit `RGB565` byte stream, which is sent via a single SPI transaction.
+* **Best for**: Complex UI elements, fonts, and cross-platform graphical logic.
+* **Snapshot**: Automatic; the `BufferedImage` serves as the primary data source.
+
+### 2. GAC Demos (Hardware Accelerated)
+These demos leverage the SSD1331's internal **Graphic Accelerator Commands (GAC)** to perform drawing operations directly on the display controller's silicon.
+* **How it works**: Instead of calculating pixels in Java, the driver sends high-level instructions (e.g., `DRAW_LINE`, `DRAW_RECTANGLE`, `COPY_WINDOW`). This significantly reduces SPI bus traffic and offloads the heavy lifting from the Raspberry Pi’s CPU to the OLED chip.
+* **Best for**: Geometric patterns, scrolling, and windowing operations where CPU efficiency is critical.
+
+### 3. Native Push Demos (Raw Framebuffers)
+The "Native Push" approach (as seen in the **Boing** demo) represents the highest tier of performance, bypassing higher-level APIs for a direct-to-silicon pipeline.
+* **How it works**: A local `byte[]` array is maintained in `RGB565` format. The demo logic manipulates bytes directly with bit-wise operations. The entire 12,288-byte buffer is then "blasted" to the display in one atomic operation using FFM's `MemorySegment`.
+* **Best for**: High-frame-rate simulations, 3D rotations, and flicker-free animations.
+
+### Feature Matrix
+
+| Feature | Java2D | GAC (Hardware) | Native Push |
+| :--- | :--- | :--- | :--- |
+| **Rendering Surface** | JVM Heap (`BufferedImage`) | SSD1331 Internal RAM | JVM Heap (`byte[]`) |
+| **CPU Usage** | Moderate | Very Low | Low-Moderate |
+| **SPI Bus Load** | High (Full Frames) | Low (Commands Only) | High (Full Frames) |
+| **Flicker-Free** | Yes (Double Buffered) | No (Immediate) | Yes (Direct Buffer) |
+| **Snapshot Support** | Native | Not implemented | Not implemented |
+
+## Run SSD1331 Periphery demos
+ To see a list of demos 
+[browse](https://github.com/sgjava/javauio2/tree/main/demo2/src/main/java/com/codeferm/periphery/ssd1331/demo)
+code. Just pass in --help to get list of command line arguments. Make sure demo2-1.0.0-SNAPSHOT-jar-with-dependencies.jar is in the current
+
 ## Run U8g2 demos
 To see a list of demos 
 [browse](https://github.com/sgjava/javauio2/tree/main/demo2/src/main/java/com/codeferm/u8g2/demo)
