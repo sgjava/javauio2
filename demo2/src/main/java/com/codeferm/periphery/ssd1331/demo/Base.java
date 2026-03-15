@@ -7,9 +7,11 @@ import com.codeferm.periphery.NativeLoader;
 import com.codeferm.periphery.device.Ssd1331;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
+import java.io.File;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import javax.imageio.ImageIO;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine.Option;
@@ -63,6 +65,9 @@ public class Base implements Callable<Integer> {
     @Option(names = {"--sleep"}, description = "Milliseconds to sleep for text/graphics, ${DEFAULT-VALUE} by default.")
     private long sleep = 5000;
 
+    @Option(names = {"--snapshot"}, description = "Seconds after start to capture screen, 0 to disable.")
+    private int snapshotTime = 0;
+
     /**
      * SSD1331 hardware driver instance.
      */
@@ -114,6 +119,7 @@ public class Base implements Callable<Integer> {
         this.image = bufferedImage;
         this.g2d = bufferedImage.createGraphics();
         final var mainThread = Thread.currentThread();
+        final var scheduler = Executors.newSingleThreadScheduledExecutor();
         // Ensures display is turned off even if interrupted via Ctrl+C
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             if (running) {
@@ -125,7 +131,6 @@ public class Base implements Callable<Integer> {
         }, "SSD1331-Cleanup-Hook"));
         // Timer to prevent perpetual execution in headless or automated environments
         if (runTime > 0) {
-            final var scheduler = Executors.newSingleThreadScheduledExecutor();
             scheduler.schedule(() -> {
                 if (running) {
                     log.info("{} second timer expired. Signalling stop...", runTime);
@@ -133,10 +138,32 @@ public class Base implements Callable<Integer> {
                     mainThread.interrupt();
                 }
             }, runTime, TimeUnit.SECONDS);
-            scheduler.shutdown();
         }
-        log.info("Display initialized: {}x{}. Auto-exit in {}s.", width, height, runTime);
+        // Snapshot timer to capture the current image buffer to disk
+        if (snapshotTime > 0) {
+            scheduler.schedule(() -> {
+                saveSnapshot(String.format("snapshot_%ds.png", snapshotTime));
+            }, snapshotTime, TimeUnit.SECONDS);
+        }
+        scheduler.shutdown();
+        log.info("Display initialized: {}x{}. Auto-exit: {}s, Snapshot: {}s.", width, height, runTime, snapshotTime);
         return 0;
+    }
+
+    /**
+     * Captures the current state of the {@code BufferedImage} and saves it as a PNG.
+     *
+     * * @param fileName The name of the file to save.
+     */
+    public void saveSnapshot(final String fileName) {
+        try {
+            final var outputFile = new File(fileName);
+            if (ImageIO.write(image, "png", outputFile)) {
+                log.info("Snapshot saved to: {}", outputFile.getAbsolutePath());
+            }
+        } catch (final Exception e) {
+            log.error("Failed to save snapshot: {}", e.getMessage());
+        }
     }
 
     /**
