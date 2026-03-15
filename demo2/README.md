@@ -46,7 +46,7 @@ The "Native Push" approach (as seen in the **Boing** demo) represents the highes
 ## Run SSD1331 Periphery demos
  To see a list of demos 
 [browse](https://github.com/sgjava/javauio2/tree/main/demo2/src/main/java/com/codeferm/periphery/ssd1331/demo)
-code. Just pass in --help to get list of command line arguments. Make sure demo2-1.0.0-SNAPSHOT-jar-with-dependencies.jar is in the current
+code. Just pass in --help to get list of command line arguments. Make sure demo2-1.0.0-SNAPSHOT-jar-with-dependencies.jar is in the current directory.
 
 ## Run U8g2 demos
 To see a list of demos 
