@@ -11,7 +11,7 @@ code. Just pass in --help to get list of command line arguments. Make sure demo2
 
 ## SSD1331 Java Demos: Rendering Architectures
 
-This showcases high-performance OLED manipulation using the **Java Foreign Function & Memory (FFM) API**. Each demo utilizes a different architectural approach to balance CPU load, bus traffic, and graphical complexity. All demos support a **unified snapshot system** that leverages a "software-mirroring" technique to capture hardware states without impacting real-time performance.
+This showcases high-performance OLED manipulation using the **Java Foreign Function & Memory (FFM) API**. Each demo utilizes a different architectural approach to balance CPU load, bus traffic, and graphical complexity.
 
 ![SpaceInvaders](images/SpaceInvaders1331.png)
 
