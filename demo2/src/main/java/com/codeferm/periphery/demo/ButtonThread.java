@@ -9,17 +9,18 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import static java.util.concurrent.TimeUnit.NANOSECONDS;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
+import static java.util.concurrent.TimeUnit.NANOSECONDS;
+
 /**
- * Blocking event demo using a separate thread for edge detection.
+ * Blocking event demo using FFM-based {@link BlockingButton}.
  * <p>
- * This demo demonstrates how to offload hardware polling to a background thread using an {@link ExecutorService}, allowing the main
- * thread to perform other logic concurrently.
+ * This version demonstrates concurrent processing by running the blocking hardware event loop in a separate thread, allowing the
+ * main program to perform other tasks.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -28,55 +29,47 @@ import picocli.CommandLine.Option;
  */
 @Slf4j
 @Command(name = "ButtonThread", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
-        description = "Waits for button press in a separate thread while other processing occurs.")
+        description = "Uses FFM edge detection to wait for button press while other processing occurs.")
 public class ButtonThread implements Callable<Integer> {
 
     static {
-        // Load native library for the FFM-based hardware devices
+        // Load the native library for underlying FFM hardware access
         NativeLoader.load();
     }
-
+     
     /**
-     * GPIO device path.
+     * GPIO device path option.
      */
-    @Option(names = {"-d", "--device"}, description = "GPIO device, ${DEFAULT-VALUE} by default.",
-            defaultValue = "/dev/gpiochip0")
-    private String device;
+    @Option(names = {"-d", "--device"}, description = "GPIO device path, ${DEFAULT-VALUE} by default.")
+    private String device = "/dev/gpiochip0";
 
     /**
-     * GPIO line number.
+     * GPIO line number option.
      */
-    @Option(names = {"-l", "--line"}, description = "GPIO line, ${DEFAULT-VALUE} by default.",
-            defaultValue = "77")
-    private int line;
+    @Option(names = {"-l", "--line"}, description = "GPIO line number, ${DEFAULT-VALUE} by default.")
+    private int line = 77;
 
     /**
-     * Spawns a background task to wait for hardware edge events.
+     * Executes the blocking wait for GPIO edges in a background thread.
      *
-     * @param executor Executor service to run the polling task.
+     * @param executor The {@link ExecutorService} used to run the background task.
      */
     public void executeWaitForEdge(final ExecutorService executor) {
         executor.execute(() -> {
-            log.info("Background thread monitoring {} line {}", device, line);
-            // BlockingButton manages the FFM Arena and handle internally
+            log.info("Starting background edge detection on {} line {}", device, line);
             try (final var button = new BlockingButton(device, line)) {
-                log.info("Press button (10s idle timeout to exit background task)");
+                log.info("Press button to see events. Stop pressing for 10 seconds to exit thread.");
+
                 BlockingButton.ButtonEvent event;
-                // Zero-allocation read loop
+                // Loop until waitForEvent times out (returns null after 10s)
                 while ((event = button.waitForEvent(10000)) != null) {
                     final var edgeStr = BlockingButton.edgeToString(event.edge());
                     final var timestampStr = BlockingButton.formatTimestamp(event.timestamp());
-                    switch (edgeStr) {
-                        case "Rising" ->
-                            log.info("Edge rising  [{}]", timestampStr);
-                        case "Falling" ->
-                            log.info("Edge falling [{}]", timestampStr);
-                        default ->
-                            log.info("Invalid edge {}, [{}]", event.edge(), timestampStr);
-                    }
+
+                    log.info("Button Edge: {:<8} [Timestamp: {}]", edgeStr, timestampStr);
                 }
-                log.info("Background task timed out.");
-            } catch (final Exception e) {
+                log.info("Background thread exiting due to inactivity timeout.");
+            } catch (Exception e) {
                 log.error("Hardware error in background thread: {}", e.getMessage());
                 throw new RuntimeException(e);
             }
@@ -84,7 +77,10 @@ public class ButtonThread implements Callable<Integer> {
     }
 
     /**
-     * Main task logic.
+     * Main application logic.
+     * <p>
+     * Orchestrates the background thread and simulates primary application work.
+     * </p>
      *
      * @return Exit code.
      */
@@ -92,39 +88,48 @@ public class ButtonThread implements Callable<Integer> {
     public Integer call() {
         var exitCode = 0;
         final var executor = Executors.newSingleThreadExecutor();
-        executeWaitForEdge(executor);
+
         try {
-            // Signal shutdown so the executor stops accepting new tasks
+            executeWaitForEdge(executor);
+
+            // Initiate shutdown so the executor stops accepting new tasks
             executor.shutdown();
-            // Simulate main loop processing for 30 seconds
+
+            // Simulate main application work for 30 seconds or until thread terminates
             int count = 0;
             while (count < 30 && !executor.isTerminated()) {
-                log.info("Main program busy... (Iteration {})", count + 1);
+                log.info("Main program processing... (Iteration {})", count + 1);
                 TimeUnit.SECONDS.sleep(1);
                 count++;
             }
+
             if (!executor.isTerminated()) {
-                log.info("Main loop finished; waiting for background thread to conclude...");
+                log.info("Main work complete. Waiting for background thread to finish...");
                 executor.awaitTermination(Long.MAX_VALUE, NANOSECONDS);
             }
-        } catch (final InterruptedException e) {
-            log.error("Main thread interrupted");
+
+        } catch (InterruptedException e) {
+            log.error("Execution interrupted: {}", e.getMessage());
             Thread.currentThread().interrupt();
             exitCode = 1;
         } finally {
-            // Ensure resource cleanup
-            executor.shutdownNow();
+            // Ensure resources are cleaned up
+            if (!executor.isTerminated()) {
+                executor.shutdownNow();
+            }
         }
-        log.info("Main program exiting.");
+
+        log.info("Application shut down cleanly.");
         return exitCode;
     }
 
     /**
-     * Entry point using picocli.
+     * Main entry point for the ButtonThread demo.
      *
      * @param args Command line arguments.
      */
     public static void main(final String... args) {
-        System.exit(new CommandLine(new ButtonThread()).execute(args));
+        final var cmd = new CommandLine(new ButtonThread());
+        System.exit(cmd.execute(args));
     }
 }
