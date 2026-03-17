@@ -14,13 +14,12 @@ import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
-import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 /**
- * Blocking event demo using FFM-based {@link BlockingButton}.
+ * Concurrent blocking event demo using FFM-based {@link BlockingButton}.
  * <p>
- * This version demonstrates concurrent processing by running the blocking hardware event loop in a separate thread, allowing the
- * main program to perform other tasks.
+ * This demo runs the hardware edge detection loop in a background thread, allowing the main application loop to remain responsive.
+ * It demonstrates proper thread interruption and resource cleanup.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -36,21 +35,33 @@ public class ButtonThread implements Callable<Integer> {
         // Load the native library for underlying FFM hardware access
         NativeLoader.load();
     }
-     
-    /**
-     * GPIO device path option.
-     */
-    @Option(names = {"-d", "--device"}, description = "GPIO device path, ${DEFAULT-VALUE} by default.")
-    private String device = "/dev/gpiochip0";
 
     /**
-     * GPIO line number option.
+     * GPIO device path.
      */
-    @Option(names = {"-l", "--line"}, description = "GPIO line number, ${DEFAULT-VALUE} by default.")
-    private int line = 77;
+    @Option(names = {"-d", "--device"}, description = "GPIO device path, ${DEFAULT-VALUE} by default.",
+            defaultValue = "/dev/gpiochip0")
+    private String device;
+
+    /**
+     * GPIO line number.
+     */
+    @Option(names = {"-l", "--line"}, description = "GPIO line number, ${DEFAULT-VALUE} by default.",
+            defaultValue = "18")
+    private int line;
+
+    /**
+     * Debounce time in milliseconds.
+     */
+    @Option(names = {"-b", "--debounce"}, description = "Debounce time in ms, ${DEFAULT-VALUE} by default.",
+            defaultValue = "50")
+    private int debounce;
 
     /**
      * Executes the blocking wait for GPIO edges in a background thread.
+     * <p>
+     * The task will terminate if the button is idle for 10 seconds or if the executor service is shut down.
+     * </p>
      *
      * @param executor The {@link ExecutorService} used to run the background task.
      */
@@ -58,7 +69,8 @@ public class ButtonThread implements Callable<Integer> {
         executor.execute(() -> {
             log.info("Starting background edge detection on {} line {}", device, line);
             try (final var button = new BlockingButton(device, line)) {
-                log.info("Press button to see events. Stop pressing for 10 seconds to exit thread.");
+                button.setDebounceMillis(debounce);
+                log.info("Press button to see events. Idle 10 seconds to exit thread.");
 
                 BlockingButton.ButtonEvent event;
                 // Loop until waitForEvent times out (returns null after 10s)
@@ -66,23 +78,20 @@ public class ButtonThread implements Callable<Integer> {
                     final var edgeStr = BlockingButton.edgeToString(event.edge());
                     final var timestampStr = BlockingButton.formatTimestamp(event.timestamp());
 
-                    log.info("Button Edge: {:<8} [Timestamp: {}]", edgeStr, timestampStr);
+                    // Corrected SLF4J formatting
+                    log.info("Button Event: {} at timestamp {}", edgeStr, timestampStr);
                 }
                 log.info("Background thread exiting due to inactivity timeout.");
-            } catch (Exception e) {
+            } catch (final Exception e) {
                 log.error("Hardware error in background thread: {}", e.getMessage());
-                throw new RuntimeException(e);
             }
         });
     }
 
     /**
-     * Main application logic.
-     * <p>
-     * Orchestrates the background thread and simulates primary application work.
-     * </p>
+     * Main application logic orchestrating the background thread and work simulation.
      *
-     * @return Exit code.
+     * @return Exit code (0 for success, 1 for error).
      */
     @Override
     public Integer call() {
@@ -95,25 +104,26 @@ public class ButtonThread implements Callable<Integer> {
             // Initiate shutdown so the executor stops accepting new tasks
             executor.shutdown();
 
-            // Simulate main application work for 30 seconds or until thread terminates
-            int count = 0;
+            // Simulate main application work for 30 seconds or until background thread terminates
+            var count = 0;
             while (count < 30 && !executor.isTerminated()) {
-                log.info("Main program processing... (Iteration {})", count + 1);
+                log.info("Main program processing... (Iteration {})", ++count);
                 TimeUnit.SECONDS.sleep(1);
-                count++;
             }
 
             if (!executor.isTerminated()) {
                 log.info("Main work complete. Waiting for background thread to finish...");
-                executor.awaitTermination(Long.MAX_VALUE, NANOSECONDS);
+                if (!executor.awaitTermination(15, TimeUnit.SECONDS)) {
+                    log.warn("Background thread timed out. Forcing shutdown.");
+                    executor.shutdownNow();
+                }
             }
 
-        } catch (InterruptedException e) {
+        } catch (final InterruptedException e) {
             log.error("Execution interrupted: {}", e.getMessage());
             Thread.currentThread().interrupt();
             exitCode = 1;
         } finally {
-            // Ensure resources are cleaned up
             if (!executor.isTerminated()) {
                 executor.shutdownNow();
             }

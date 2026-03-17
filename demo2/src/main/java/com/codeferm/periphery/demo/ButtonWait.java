@@ -14,9 +14,8 @@ import picocli.CommandLine.Option;
 /**
  * Blocking event demo using FFM-based BlockingButton device.
  * <p>
- * This demo demonstrates efficient edge detection polling. It utilizes the 
- * high-level abstraction to wait for physical button presses (interrupts) 
- * without CPU-intensive busy-waiting.
+ * This demo demonstrates efficient edge detection polling. It utilizes the high-level abstraction to wait for physical button
+ * presses (interrupts) without CPU-intensive busy-waiting.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -44,7 +43,7 @@ public class ButtonWait implements Callable<Integer> {
      * GPIO line number.
      */
     @Option(names = {"-l", "--line"}, description = "GPIO line, ${DEFAULT-VALUE} by default.",
-            defaultValue = "77")
+            defaultValue = "18")
     private int line;
 
     /**
@@ -66,11 +65,11 @@ public class ButtonWait implements Callable<Integer> {
 
                 // Efficiently log the hardware interrupt event
                 switch (edgeStr) {
-                    case "Rising" -> 
+                    case "Rising" ->
                         log.info("Edge rising  [{}]", timestampStr);
-                    case "Falling" -> 
+                    case "Falling" ->
                         log.info("Edge falling [{}]", timestampStr);
-                    default -> 
+                    default ->
                         log.info("Invalid edge {}, [{}]", event.edge(), timestampStr);
                 }
             }
