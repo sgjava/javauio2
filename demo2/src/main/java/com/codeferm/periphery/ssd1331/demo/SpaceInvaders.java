@@ -576,18 +576,21 @@ public class SpaceInvaders extends Base {
             g.setColor(Color.YELLOW);
             g.fillRect(px - 4, h - 5, 9, 4);
             g.fillRect(px - 1, h - 7, 3, 2);
-        } else switch (gameState) {
-            case EXPLODING -> {
-                g.setColor(Color.WHITE);
-                for (var i = 0; i < 20; i++) {
-                    g.fillRect(px + random.nextInt(15) - 7, h - 5 + random.nextInt(10) - 5, 1, 1);
+        } else {
+            switch (gameState) {
+                case EXPLODING -> {
+                    g.setColor(Color.WHITE);
+                    for (var i = 0; i < 20; i++) {
+                        g.fillRect(px + random.nextInt(15) - 7, h - 5 + random.nextInt(10) - 5, 1, 1);
+                    }
                 }
-            }
-            case GAME_OVER -> drawCenteredText(g, "GAME OVER", w, h / 2, Color.RED);
-            default -> {
-                g.setColor(Color.YELLOW);
-                g.fillRect(px - 4, h - 5, 9, 4);
-                g.fillRect(px - 1, h - 7, 3, 2);
+                case GAME_OVER ->
+                    drawCenteredText(g, "GAME OVER", w, h / 2, Color.RED);
+                default -> {
+                    g.setColor(Color.YELLOW);
+                    g.fillRect(px - 4, h - 5, 9, 4);
+                    g.fillRect(px - 1, h - 7, 3, 2);
+                }
             }
         }
 
@@ -603,25 +606,30 @@ public class SpaceInvaders extends Base {
     @Override
     public Integer call() throws Exception {
         super.call();
-
         final var w = getWidth();
         final var h = getHeight();
         final var targetFps = getFps();
-
         initLevel(w, h, true);
+        // Check isInterrupted() so Base.java can signal a stop
+        while (running && !Thread.currentThread().isInterrupted()) {
+            try {
+                updateLogic(w, h);
+                render();
 
-        while (running) {
-            updateLogic(w, h);
-            render();
+                if (gameState == State.GAME_OVER) {
+                    TimeUnit.SECONDS.sleep(3);
+                    running = false;
+                }
 
-            if (gameState == State.GAME_OVER) {
-                TimeUnit.SECONDS.sleep(3);
+                // FPS sync - catch the interrupt here
+                TimeUnit.MILLISECONDS.sleep(1000 / targetFps);
+
+            } catch (InterruptedException e) {
+                log.info("Game loop interrupted, shutting down...");
+                Thread.currentThread().interrupt(); // Restore status
                 running = false;
             }
-            // Simple FPS sync
-            TimeUnit.MILLISECONDS.sleep(1000 / targetFps);
         }
-
         done();
         return 0;
     }
