@@ -25,7 +25,7 @@ import picocli.CommandLine.Command;
 @Command(
         name = "Boing",
         mixinStandardHelpOptions = true,
-        version = "3.2.0",
+        version = "1.0.0-SNAPSHOT",
         description = "Full-throttle Buffered 3D Boing Ball."
 )
 public class Boing extends Base {

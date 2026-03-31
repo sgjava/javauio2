@@ -27,7 +27,7 @@ import picocli.CommandLine.Command;
  * @since 1.0.0
  */
 @Slf4j
-@Command(name = "SpaceInvaders", mixinStandardHelpOptions = true, version = "1.0.0",
+@Command(name = "SpaceInvaders", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "SSD1331 Space Invaders using FFM")
 public class SpaceInvaders extends Base {
 

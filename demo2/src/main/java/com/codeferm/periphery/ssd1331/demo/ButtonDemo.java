@@ -37,7 +37,7 @@ import picocli.CommandLine.Option;
  * @since 1.0.0
  */
 @Slf4j
-@Command(name = "Ssd1331ButtonDemo", mixinStandardHelpOptions = true, version = "1.3.2",
+@Command(name = "Ssd1331ButtonDemo", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "High-standard interactive SSD1331 OLED demonstration.")
 public class ButtonDemo extends Base {
 
@@ -100,10 +100,8 @@ public class ButtonDemo extends Base {
         final var g = getG2d();
         final var w = getWidth();
         final var h = getHeight();
-
         g.setColor(Color.BLACK);
         g.fillRect(0, 0, w, h);
-
         switch (scene) {
             case 0 ->
                 renderPrompt(g, w, h);
@@ -126,7 +124,6 @@ public class ButtonDemo extends Base {
         g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 10));
         g.setColor(Color.WHITE);
         g.drawString("READY...", 28, 25);
-
         if ((System.currentTimeMillis() / 500) % 2 == 0) {
             g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 9));
             g.setColor(Color.CYAN);
@@ -176,22 +173,16 @@ public class ButtonDemo extends Base {
     @Override
     public final Integer call() throws Exception {
         super.call();
-
         final ExecutorService pool = Executors.newSingleThreadExecutor();
         final long runTimeMs = (getRunTime() > 0) ? getRunTime() * 1000L : 60000L;
-
         BlockingButton button = null;
-
         try {
             button = new BlockingButton(buttonDev, buttonLine);
             button.setDebounceMillis(debounce);
-
             final var finalButton = button;
             pool.execute(() -> startButtonListener(finalButton));
-
             log.info("Interactive demo active for {}ms.", runTimeMs);
             final long end = System.currentTimeMillis() + runTimeMs;
-
             while (System.currentTimeMillis() < end && !Thread.currentThread().isInterrupted()) {
                 drawContent(sceneIndex.get());
                 getOled().drawImage(getImage());
@@ -216,7 +207,6 @@ public class ButtonDemo extends Base {
             } catch (final InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
-
             // 2. Close hardware button after the listener thread has definitely stopped
             if (button != null) {
                 try {
@@ -225,12 +215,12 @@ public class ButtonDemo extends Base {
                     log.error("Error closing button: {}", e.getMessage());
                 }
             }
-
             // 3. Final hardware cleanup via Base (SPI/Arena/Context)
             done();
         }
         return 0;
     }
+
     /**
      * Main method.
      *

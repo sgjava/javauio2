@@ -26,7 +26,7 @@ import picocli.CommandLine.Spec;
  * @since 1.0.0
  */
 @Slf4j
-@Command(name = "Raytrace", mixinStandardHelpOptions = true, version = "1.0.0",
+@Command(name = "Raytrace", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "Castle raycaster with improved navigation and irregular masonry")
 public class Raytrace extends Base {
 

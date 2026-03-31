@@ -26,7 +26,7 @@ import picocli.CommandLine.Spec;
  * @since 1.0.0
  */
 @Slf4j
-@Command(name = "WireframeCube", mixinStandardHelpOptions = true, version = "1.0.0",
+@Command(name = "WireframeCube", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "Bouncing 3D cube with phasing colors for SSD1331")
 public class WireframeCube extends Base {
 

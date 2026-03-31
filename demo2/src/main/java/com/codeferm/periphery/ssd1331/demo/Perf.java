@@ -23,7 +23,7 @@ import picocli.CommandLine.Option;
  * @since 1.0.0
  */
 @Slf4j
-@Command(name = "Perf", mixinStandardHelpOptions = true, version = "1.0.0",
+@Command(name = "Perf", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "SSD1331 drawImage performance demo using FFM")
 public class Perf extends Base {
 

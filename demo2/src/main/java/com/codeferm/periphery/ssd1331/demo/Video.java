@@ -33,7 +33,7 @@ import picocli.CommandLine.Option;
  * @since 1.0.0
  */
 @Slf4j
-@Command(name = "Video", mixinStandardHelpOptions = true, version = "1.0.0",
+@Command(name = "Video", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "Play raw RGB565BE video frames using FFM segments")
 public class Video extends Base {
 

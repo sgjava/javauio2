@@ -26,7 +26,7 @@ import picocli.CommandLine.Command;
 @Command(
         name = "GacCubeDemo",
         mixinStandardHelpOptions = true,
-        version = "1.0.0",
+        version = "1.0.0-SNAPSHOT",
         description = "Hardware-accelerated 3D wireframe cubes."
 )
 public class GacCubeDemo extends Base {

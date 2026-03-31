@@ -29,7 +29,7 @@ import picocli.CommandLine.Option;
  * @since 1.0.0
  */
 @Slf4j
-@Command(name = "Video", mixinStandardHelpOptions = true, version = "1.1.0-SNAPSHOT",
+@Command(name = "Video", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "Video demo with resolution-independent centering")
 public class Video extends Base {
 
