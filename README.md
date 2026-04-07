@@ -13,7 +13,7 @@
 
 **Java UIO 2** is the next-generation evolution of the Java UIO project, rebuilt from the ground up to leverage the **Foreign Function & Memory API (FFM)**. By moving beyond traditional JNI, Java UIO 2 achieves unprecedented performance and hardware-level accuracy for Linux Userspace IO. Engineered for **JDK 25**, it provides a cutting-edge cross-platform solution for modern embedded systems.
 
-## 🚀 The 10x Standard
+## 🚀 The New Standard
 This project adheres to rigorous development standards to ensure production-grade reliability and performance:
 * **Modern Java:** Full utilization of `var`, `final`, and the latest FFM features.
 * **Zero Allocation:** Frame-based operations (like SSD1331 rendering) use pre-allocated buffers to eliminate GC pressure during high-speed I/O.
