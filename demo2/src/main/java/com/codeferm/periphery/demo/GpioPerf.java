@@ -81,8 +81,9 @@ public class GpioPerf implements Callable<Integer> {
 
             log.info("Running read test with {} samples", samples);
             start = Instant.now();
+            var stateBuffer = arena.allocate(java.lang.foreign.ValueLayout.JAVA_BOOLEAN);
             for (var i = 0; i < samples; i++) {
-                Periphery.gpio_read(handle, MemorySegment.NULL); // Passing NULL as we don't need the value
+                Periphery.gpio_read(handle, stateBuffer);
             }
             finish = Instant.now();
 
