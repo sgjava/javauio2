@@ -5,7 +5,6 @@
 # @author: sgoldsmith
 #
 # Sets up non-root access for GPIO, I2C, SPI, PWM, and MMIO.
-# Consolidated from legacy 98-sysfs.rules, 99-pwm.rules, and uio-permissions.sh.
 #
 # Steven P. Goldsmith
 # sgjava@gmail.com
@@ -33,15 +32,9 @@ if [ -d /sys/devices/platform/leds/leds ]; then
     chmod -R ug+rw /sys/devices/platform/leds/leds
 fi
 
-# Allwinner SoC (sunxi) pinctrl and pwm logic from 98-sysfs and 99-pwm rules
-chown -R root:uio /sys/class/gpio /sys/class/pwm
-chmod -R g+w /sys/class/gpio /sys/class/pwm
-
-# Target specific SoC platform device paths
-chown -R root:uio /sys/devices/platform/soc/*.pinctrl /sys/devices/platform/soc/*.pwm/pwm/pwmchip* 2>/dev/null || true
-chmod -R g+w /sys/devices/platform/soc/*.pinctrl /sys/devices/platform/soc/*.pwm/pwm/pwmchip* 2>/dev/null || true
 exit 0
 EOF
+
 sudo chmod +x /usr/local/bin/uio-permissions.sh
 
 # 3. Create Systemd Service
@@ -65,6 +58,10 @@ echo "Applying changes and starting service..."
 sudo systemctl daemon-reload
 sudo systemctl enable uio-permissions.service
 sudo systemctl start uio-permissions.service
+
+# 5. Copy udev rules 
+sudo cp 98-sysfs.rules /etc/udev/rules.d/. >> "$logfile" 2>&1
+sudo cp 99-pwm.rules /etc/udev/rules.d/. >> "$logfile" 2>&1
 
 echo "--- Setup Complete ---"
 echo "MMIO access (/dev/mem) and GPIO access are now available to the uio group."

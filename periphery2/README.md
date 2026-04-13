@@ -22,6 +22,9 @@ to use one off board specific drivers,
 [deprecated sysfs](https://www.kernel.org/doc/html/latest/admin-guide/gpio/sysfs.html)
 interface.
 
+# Raspberry Pi configuration under Armbian
+Use `/boot/firmware/config.txt` to configure Pi instead of `/boot/armbianEnv.txt`.
+
 ## Armbian and built in buttons
 On the NanoPi Duo the built in button causes it to shutdown by default. You can
 remove the r_gpio_keys section in the DTB as follows (this may work on other SBCs,

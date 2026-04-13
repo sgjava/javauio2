@@ -15,7 +15,7 @@
 
 ## 🚀 The New Standard
 This project adheres to rigorous development standards to ensure production-grade reliability and performance:
-* **Modern Java:** Full utilization of `var`, `final`, and the latest FFM features.
+* **Modern Java:** Full utilization modern Java and the latest FFM features.
 * **Zero Allocation:** Frame-based operations (like SSD1331 rendering) use pre-allocated buffers to eliminate GC pressure during high-speed I/O.
 * **Clean Architecture:** **No native loaders in device classes.** Native loading is handled at the application level, keeping core logic decoupled and lean.
 * **Complete Documentation:** 100% Javadoc coverage for all public APIs.
