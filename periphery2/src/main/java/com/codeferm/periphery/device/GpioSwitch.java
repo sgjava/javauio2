@@ -17,7 +17,8 @@ import org.periphery.gpio_handle;
  * GPIO switch device with background polling, callback support, and software debouncing.
  * <p>
  * This class provides an event-driven abstraction for GPIO lines that do not support hardware edge detection (EINT). It manages a
- * background thread to monitor state changes and filters out mechanical contact chatter (debounce).
+ * background thread to monitor state changes and filters out mechanical contact chatter (debounce). If you are using a push button
+ * module like in the 37 in 1 kits run - to 5v, S to GND and middle pin to GPIO.
  * </p>
  *
  * @author Steven P. Goldsmith
