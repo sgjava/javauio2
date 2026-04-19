@@ -4,7 +4,7 @@
 package com.codeferm.periphery.demo;
 
 import com.codeferm.periphery.NativeLoader;
-import com.codeferm.periphery.device.SoftPwm;
+import com.codeferm.periphery.SoftPwm;
 import com.codeferm.periphery.device.PwmDevice;
 import com.codeferm.periphery.device.PwmLed;
 import java.util.concurrent.Callable;

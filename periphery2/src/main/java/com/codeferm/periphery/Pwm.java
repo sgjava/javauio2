@@ -1,7 +1,7 @@
 /*
  * Copyright (c) Steven P. Goldsmith. All rights reserved.
  */
-package com.codeferm.periphery.device;
+package com.codeferm.periphery;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;

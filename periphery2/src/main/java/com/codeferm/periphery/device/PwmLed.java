@@ -3,6 +3,7 @@
  */
 package com.codeferm.periphery.device;
 
+import com.codeferm.periphery.Pwm;
 import lombok.extern.slf4j.Slf4j;
 import org.periphery.Periphery;
 

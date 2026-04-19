@@ -1,8 +1,9 @@
 /*
  * Copyright (c) Steven P. Goldsmith. All rights reserved.
  */
-package com.codeferm.periphery.device;
+package com.codeferm.periphery;
 
+import com.codeferm.periphery.device.PwmDevice;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.concurrent.atomic.AtomicBoolean;

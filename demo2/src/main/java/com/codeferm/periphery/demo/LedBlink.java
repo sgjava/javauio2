@@ -16,7 +16,8 @@ import picocli.CommandLine.Option;
  * Blink LED using high-level FFM device abstraction.
  * <p>
  * This demo utilizes the GpioLed class which wraps jextract-generated bindings. Ensure your hardware is rigged with a
- * current-limiting resistor (e.g., 220Ω) between the GPIO pin and the LED anode.
+ * current-limiting resistor (e.g., 220Ω) between the GPIO pin and the LED anode. Also can be used with laser-transmit module,
+ * two-color common cathode LED module (one line at a time)
  * </p>
  *
  * @author Steven P. Goldsmith
