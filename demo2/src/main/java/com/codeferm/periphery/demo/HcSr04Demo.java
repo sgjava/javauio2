@@ -13,18 +13,18 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
 /**
- * HC-SR04 FFM Ultrasonic Distance sensor demo with configurable intervals.
+ * HC-SR04 FFM Ultrasonic Distance sensor demo with configurable intervals and device mapping options.
  * <p>
- * NOTE: The Echo pin (5V) must be connected to the Raspberry Pi GPIO (3.3V) using a voltage divider: 1k ohm resistor from Echo to
- * GPIO, and a 2k ohm resistor from GPIO to Ground.
+ * NOTE: The Echo pin (5V) must be connected to the Single Board Computer GPIO (3.3V) using a voltage divider: 1k ohm resistor from
+ * Echo to GPIO, and a 2k ohm resistor from GPIO to Ground.
  * </p>
  *
  * @author Steven P. Goldsmith
- * @version 1.0.0
+ * @version 1.0.1
  * @since 1.0.0
  */
 @Slf4j
-@Command(name = "HcSr04Demo", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT")
+@Command(name = "HcSr04Demo", mixinStandardHelpOptions = true, version = "1.0.1-SNAPSHOT")
 public class HcSr04Demo implements Callable<Integer> {
 
     static {
@@ -32,10 +32,16 @@ public class HcSr04Demo implements Callable<Integer> {
         NativeLoader.load();
     }
 
-    @Option(names = {"-t", "--trig"}, description = "Trig line.", defaultValue = "27")
+    @Option(names = {"-td", "--trig-device"}, description = "GPIO chip device path for Trig.", defaultValue = "/dev/gpiochip0")
+    private String trigDevice;
+
+    @Option(names = {"-t", "--trig"}, description = "Trig line index.", defaultValue = "27")
     private int trigLine;
 
-    @Option(names = {"-e", "--echo"}, description = "Echo line.", defaultValue = "17")
+    @Option(names = {"-ed", "--echo-device"}, description = "GPIO chip device path for Echo.", defaultValue = "/dev/gpiochip0")
+    private String echoDevice;
+
+    @Option(names = {"-e", "--echo"}, description = "Echo line index.", defaultValue = "17")
     private int echoLine;
 
     @Option(names = {"-m", "--metric"}, description = "Use metric (cm) instead of imperial (in).", defaultValue = "false")
@@ -54,19 +60,20 @@ public class HcSr04Demo implements Callable<Integer> {
      */
     @Override
     public Integer call() {
-        log.info("Starting HC-SR04 Demo [Trig: {}, Echo: {}]", trigLine, echoLine);
+        log.info("Starting HC-SR04 Demo [Trig: {} Line {}, Echo: {} Line {}]",
+                this.trigDevice, this.trigLine, this.echoDevice, this.echoLine);
         log.info("Runtime: {}s, Interval: {}s, Units: {}",
-                durationSeconds, intervalSeconds, metric ? "Metric (cm)" : "Imperial (in)");
+                this.durationSeconds, this.intervalSeconds, this.metric ? "Metric (cm)" : "Imperial (in)");
 
-        try (final var sensor = new HcSr04("/dev/gpiochip0", trigLine, "/dev/gpiochip0", echoLine)) {
+        try (final var sensor = new HcSr04(this.trigDevice, this.trigLine, this.echoDevice, this.echoLine)) {
             final var startTime = System.currentTimeMillis();
-            final var endTime = startTime + TimeUnit.SECONDS.toMillis(durationSeconds);
+            final var endTime = startTime + TimeUnit.SECONDS.toMillis(this.durationSeconds);
 
             while (System.currentTimeMillis() < endTime) {
                 if (sensor.read()) {
                     final var rawCm = sensor.getDistance();
 
-                    if (metric) {
+                    if (this.metric) {
                         log.info("Distance: {} cm", String.format("%.2f", rawCm));
                     } else {
                         // 1 cm = 0.393701 inches
@@ -78,8 +85,8 @@ public class HcSr04Demo implements Callable<Integer> {
                 }
 
                 // Wait for the specified interval before the next measurement
-                if (System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(intervalSeconds) < endTime) {
-                    TimeUnit.SECONDS.sleep(intervalSeconds);
+                if (System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(this.intervalSeconds) < endTime) {
+                    TimeUnit.SECONDS.sleep(this.intervalSeconds);
                 } else {
                     break;
                 }
