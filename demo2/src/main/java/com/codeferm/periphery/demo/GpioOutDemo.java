@@ -6,16 +6,17 @@ package com.codeferm.periphery.demo;
 import com.codeferm.periphery.NativeLoader;
 import com.codeferm.periphery.device.GpioOut;
 import java.util.concurrent.Callable;
+import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
 /**
- * Demo for GpioOut device.
+ * Demo for GpioOut device using TimeUnit for precise timing.
  * <p>
- * This demo works for any digital output device like an Active Buzzer or LED. It toggles the state based on the provided line and
- * delay.
+ * This demo works for any digital output device like an Active Buzzer or LED. It toggles the state based on the provided line,
+ * using TimeUnit to handle timing logic semantically.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -26,7 +27,7 @@ import picocli.CommandLine.Option;
 @Command(name = "GpioOutDemo",
         mixinStandardHelpOptions = true,
         version = "1.0.0",
-        description = "Toggles a GPIO output device (Buzzer/LED) using FFM.")
+        description = "Toggles a GPIO output device (Buzzer/LED) using FFM and TimeUnit.")
 public final class GpioOutDemo implements Callable<Integer> {
 
     static {
@@ -46,10 +47,10 @@ public final class GpioOutDemo implements Callable<Integer> {
     private int line;
 
     /**
-     * Delay between toggles in milliseconds.
+     * Duration for the output state to be active.
      */
-    @Option(names = {"-m", "--ms"}, description = "Delay in milliseconds", defaultValue = "500")
-    private long delay;
+    @Option(names = {"-m", "--duration"}, description = "Active duration in ms", defaultValue = "500")
+    private long duration;
 
     /**
      * Number of toggle iterations.
@@ -69,17 +70,18 @@ public final class GpioOutDemo implements Callable<Integer> {
         try (final var out = new GpioOut(device, line)) {
             for (int i = 0; i < iterations; i++) {
                 log.debug("Iteration {} of {}", i + 1, iterations);
-
                 out.on();
-                Thread.sleep(delay);
-
+                // Use TimeUnit for semantic sleep
+                TimeUnit.MILLISECONDS.sleep(duration);
                 out.off();
+                // Only sleep between, not after the last one
                 if (i < iterations - 1) {
-                    Thread.sleep(delay);
+                    TimeUnit.MILLISECONDS.sleep(duration);
                 }
             }
             log.info("Demo completed successfully.");
         } catch (InterruptedException e) {
+            // Restore interrupted state
             Thread.currentThread().interrupt();
             log.error("Demo interrupted: {}", e.getMessage());
             return 1;
