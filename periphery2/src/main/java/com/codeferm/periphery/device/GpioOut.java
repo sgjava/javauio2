@@ -12,10 +12,10 @@ import org.periphery.Periphery;
 import org.periphery.gpio_handle;
 
 /**
- * LED device using pure FFM bindings to c-periphery.
+ * Generic GPIO output device (LED, Active Buzzer, Relay, etc.) using pure FFM bindings.
  * <p>
  * High-performance, thread-safe control of a GPIO line. This implementation uses pre-allocated native memory segments for hardware
- * handles and state retrieval.
+ * handles and state retrieval to ensure zero-allocation during operation.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -23,7 +23,7 @@ import org.periphery.gpio_handle;
  * @since 1.0.0
  */
 @Slf4j
-public class GpioLed implements AutoCloseable {
+public class GpioOut implements AutoCloseable {
 
     /**
      * GPIO direction out constant from c-periphery.
@@ -51,43 +51,42 @@ public class GpioLed implements AutoCloseable {
     private final MemorySegment stateBuffer;
 
     /**
-     * Constructor for GpioLed using jextract bindings.
+     * Constructor for GpioOut.
      *
      * @param device GPIO device path (e.g., "/dev/gpiochip0").
      * @param line GPIO line number.
      * @throws RuntimeException if the GPIO cannot be opened.
      */
-    public GpioLed(final String device, final int line) {
+    public GpioOut(final String device, final int line) {
         this.arena = Arena.ofShared();
         this.handle = arena.allocate(gpio_handle.layout());
         this.stateBuffer = arena.allocate(ValueLayout.JAVA_BOOLEAN);
 
         final var cDevice = arena.allocateFrom(device);
 
-        // Open GPIO for output: initialized to low (8N1 logic not applicable here)
         if (Periphery.gpio_open(handle, cDevice, line, GPIO_DIR_OUT) < 0) {
             final var error = Periphery.gpio_errmsg(handle).getString(0);
             throw new RuntimeException("Failed to open GPIO %s line %d: %s".formatted(device, line, error));
         }
-        log.atDebug().log("LED initialized on {} line {}", device, line);
+        log.atDebug().log("GPIO output initialized on {} line {}", device, line);
     }
 
     /**
-     * Turn the LED on.
+     * Set the output state to high (on).
      */
     public void on() {
         setState(true);
     }
 
     /**
-     * Turn the LED off.
+     * Set the output state to low (off).
      */
     public void off() {
         setState(false);
     }
 
     /**
-     * Set the LED state.
+     * Set the GPIO state.
      *
      * @param value True for high (on), false for low (off).
      */
@@ -101,9 +100,9 @@ public class GpioLed implements AutoCloseable {
     }
 
     /**
-     * Get the current state of the LED pin.
+     * Get the current state of the GPIO pin.
      *
-     * @return True if on, false if off.
+     * @return True if high, false if low.
      */
     public boolean getState() {
         lock.lock();
@@ -119,7 +118,7 @@ public class GpioLed implements AutoCloseable {
     }
 
     /**
-     * Toggle the LED state.
+     * Toggle the current GPIO state.
      */
     public void toggle() {
         lock.lock();
