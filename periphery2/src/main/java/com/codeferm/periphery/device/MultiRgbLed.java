@@ -6,47 +6,37 @@ package com.codeferm.periphery.device;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * Multi-channel RGB LED device using the PwmDevice interface.
+ * Composite device for managing an RGB LED triad.
  * <p>
- * This version supports dimming via PWM. Each channel can be a hardware or software PWM implementation.
+ * This class coordinates three {@link PwmLed} instances to provide unified RGB control.
  * </p>
- *
- * @author Steven P. Goldsmith
- * @version 1.0.0
- * @since 1.0.0
  */
 @Slf4j
-public class MultiRgbLed implements AutoCloseable {
+public final class MultiRgbLed implements AutoCloseable {
 
-    private final PwmDevice red;
-    private final PwmDevice green;
-    private final PwmDevice blue;
+    private final PwmLed red;
+    private final PwmLed green;
+    private final PwmLed blue;
 
     /**
-     * Constructor using generic PWM devices.
+     * Constructs a composite RGB LED.
      *
-     * @param red PWM device for red channel.
-     * @param green PWM device for green channel.
-     * @param blue PWM device for blue channel.
+     * @param red Red channel device.
+     * @param green Green channel device.
+     * @param blue Blue channel device.
      */
-    public MultiRgbLed(final PwmDevice red, final PwmDevice green, final PwmDevice blue) {
+    public MultiRgbLed(final PwmLed red, final PwmLed green, final PwmLed blue) {
         this.red = red;
         this.green = green;
         this.blue = blue;
     }
 
-    /**
-     * Enables all PWM channels.
-     */
     public void enable() {
         red.enable();
         green.enable();
         blue.enable();
     }
 
-    /**
-     * Disables all PWM channels.
-     */
     public void disable() {
         red.disable();
         green.disable();
@@ -54,32 +44,26 @@ public class MultiRgbLed implements AutoCloseable {
     }
 
     /**
-     * Sets the RGB color using duty cycle ratios.
+     * Sets the RGB values.
      *
-     * @param periodNs Total period in nanoseconds.
-     * @param rDcNs Red duty cycle in nanoseconds.
-     * @param gDcNs Green duty cycle in nanoseconds.
-     * @param bDcNs Blue duty cycle in nanoseconds.
+     * @param periodNs Common period for all channels.
+     * @param rNs Red duty cycle.
+     * @param gNs Green duty cycle.
+     * @param bNs Blue duty cycle.
      */
-    public void setRgb(final long periodNs, final long rDcNs, final long gDcNs, final long bDcNs) {
-        red.setPulse(periodNs, rDcNs);
-        green.setPulse(periodNs, gDcNs);
-        blue.setPulse(periodNs, bDcNs);
+    public void setRgb(final long periodNs, final long rNs, final long gNs, final long bNs) {
+        red.setPulse(periodNs, rNs);
+        green.setPulse(periodNs, gNs);
+        blue.setPulse(periodNs, bNs);
     }
 
-    /**
-     * Turns all channels off by setting duty cycle to 0.
-     *
-     * @param periodNs Current period to maintain.
-     */
     public void off(final long periodNs) {
         setRgb(periodNs, 0, 0, 0);
     }
 
     @Override
     public void close() {
-        log.debug("Closing MultiRgbLed");
-        // Interface handles closing internal resources (FFM arena, threads, handles)
+        log.debug("Closing MultiRgbLed composite");
         red.close();
         green.close();
         blue.close();

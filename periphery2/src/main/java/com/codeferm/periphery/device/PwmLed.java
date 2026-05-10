@@ -3,55 +3,68 @@
  */
 package com.codeferm.periphery.device;
 
-import com.codeferm.periphery.Pwm;
 import lombok.extern.slf4j.Slf4j;
-import org.periphery.Periphery;
 
 /**
- * Hardware-backed PWM implementation using Linux sysfs and FFM.
+ * PWM-controlled LED implementation.
+ * <p>
+ * This class provides high-level control over LED brightness using a {@link PwmDevice} transport. It supports enabling, disabling,
+ * and setting brightness via duty cycle adjustments.
+ * </p>
  *
  * @author Steven P. Goldsmith
  * @version 1.0.0
  * @since 1.0.0
  */
 @Slf4j
-public class PwmLed implements PwmDevice {
+public class PwmLed implements AutoCloseable {
 
     /**
-     * Internal FFM wrapper for c-periphery PWM.
+     * The underlying PWM transport (Hardware or Software).
      */
-    private final Pwm pwm;
+    private final PwmDevice pwm;
 
     /**
-     * Constructs a hardware PWM device.
+     * Constructs a PwmLed using a unified PWM transport.
      *
-     * @param chip The PWM chip index.
-     * @param channel The PWM channel index.
+     * @param pwm The {@link PwmDevice} implementation to use.
      */
-    public PwmLed(final int chip, final int channel) {
-        this.pwm = new Pwm(chip, channel);
+    public PwmLed(final PwmDevice pwm) {
+        this.pwm = pwm;
     }
 
-    @Override
+    /**
+     * Enables the LED output.
+     */
     public void enable() {
         pwm.enable();
     }
 
-    @Override
+    /**
+     * Disables the LED output.
+     */
     public void disable() {
         pwm.disable();
     }
 
-    @Override
+    /**
+     * Sets the LED brightness by adjusting the PWM pulse.
+     *
+     * @param periodNs Total signal period in nanoseconds.
+     * @param dutyCycleNs Pulse width in nanoseconds (brightness level).
+     */
     public void setPulse(final long periodNs, final long dutyCycleNs) {
-        final var handle = pwm.getHandle();
-        // Hardware PWM requires duty_cycle <= period
-        Periphery.pwm_set_period_ns(handle, periodNs);
-        Periphery.pwm_set_duty_cycle_ns(handle, dutyCycleNs);
+        pwm.setPulse(periodNs, dutyCycleNs);
     }
 
+    /**
+     * Releases the underlying PWM resources.
+     */
     @Override
     public void close() {
+        if (log.isDebugEnabled()) {
+            log.debug("Closing PWM LED");
+        }
         pwm.close();
     }
 }

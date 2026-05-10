@@ -3,9 +3,11 @@
  */
 package com.codeferm.periphery;
 
+import com.codeferm.periphery.device.PwmDevice;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
+import java.util.concurrent.locks.ReentrantLock;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
@@ -15,7 +17,8 @@ import org.periphery.pwm_handle;
 /**
  * c-periphery PWM wrapper functions for Linux userspace sysfs PWMs using FFM.
  * <p>
- * This implementation replaces legacy JNI with Project Panama/FFM API for high-performance interaction with Linux PWM sysfs.
+ * This implementation fulfills the {@link PwmDevice} contract, providing thread-safe, high-performance interaction with Linux PWM
+ * sysfs via Project Panama.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -23,12 +26,17 @@ import org.periphery.pwm_handle;
  * @since 1.0.0
  */
 @Slf4j
-public class Pwm implements AutoCloseable {
+public class Pwm implements PwmDevice {
 
     /**
-     * Successful operation constant.
+     * Successful operation constant from c-periphery.
      */
     public static final int PWM_SUCCESS = 0;
+
+    /**
+     * Lock for thread-safe hardware register access.
+     */
+    private final ReentrantLock lock = new ReentrantLock();
 
     /**
      * Arena for native memory lifecycle management.
@@ -50,36 +58,62 @@ public class Pwm implements AutoCloseable {
      */
     public Pwm(final int chip, final int channel) {
         this.arena = Arena.ofShared();
-
-        // Allocate handle structure using jextract-generated layout
         this.handle = arena.allocate(pwm_handle.layout());
 
         if (handle.address() == 0) {
             throw new RuntimeException("Failed to allocate native PWM handle memory");
         }
 
-        // Open device
         if (Periphery.pwm_open(handle, chip, channel) != PWM_SUCCESS) {
             final var error = getErrorMessage();
             arena.close();
-            throw new RuntimeException(error);
+            throw new RuntimeException("Failed to open PWM chip %d channel %d: %s".formatted(chip, channel, error));
         }
 
         log.debug("PWM opened: chip {}, channel {}", chip, channel);
     }
 
     /**
-     * Enable the PWM output.
+     * Enables the PWM output signal.
      */
+    @Override
     public void enable() {
-        checkError(Periphery.pwm_enable(handle), "enable");
+        lock.lock();
+        try {
+            checkError(Periphery.pwm_enable(handle), "enable");
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
-     * Disable the PWM output.
+     * Disables the PWM output signal.
      */
+    @Override
     public void disable() {
-        checkError(Periphery.pwm_disable(handle), "disable");
+        lock.lock();
+        try {
+            checkError(Periphery.pwm_disable(handle), "disable");
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Sets the PWM pulse parameters in nanoseconds.
+     *
+     * @param periodNs Total duration of a single cycle.
+     * @param dutyCycleNs Duration the signal is high.
+     */
+    @Override
+    public void setPulse(final long periodNs, final long dutyCycleNs) {
+        lock.lock();
+        try {
+            checkError(Periphery.pwm_set_period_ns(handle, periodNs), "set_period_ns");
+            checkError(Periphery.pwm_set_duty_cycle_ns(handle, dutyCycleNs), "set_duty_cycle_ns");
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -88,7 +122,12 @@ public class Pwm implements AutoCloseable {
      * @param frequency Frequency in Hz.
      */
     public void setFrequency(final double frequency) {
-        checkError(Periphery.pwm_set_frequency(handle, frequency), "set_frequency");
+        lock.lock();
+        try {
+            checkError(Periphery.pwm_set_frequency(handle, frequency), "set_frequency");
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -97,29 +136,14 @@ public class Pwm implements AutoCloseable {
      * @return Frequency in Hz.
      */
     public double getFrequency() {
-        final var freqBox = arena.allocate(ValueLayout.JAVA_DOUBLE);
-        checkError(Periphery.pwm_get_frequency(handle, freqBox), "get_frequency");
-        return freqBox.get(ValueLayout.JAVA_DOUBLE, 0);
-    }
-
-    /**
-     * Sets the duty cycle as a ratio between 0.0 and 1.0.
-     *
-     * @param dutyCycle Ratio (0.0 to 1.0).
-     */
-    public void setDutyCycle(final double dutyCycle) {
-        checkError(Periphery.pwm_set_duty_cycle(handle, dutyCycle), "set_duty_cycle");
-    }
-
-    /**
-     * Gets the current duty cycle ratio.
-     *
-     * @return Ratio (0.0 to 1.0).
-     */
-    public double getDutyCycle() {
-        final var dutyBox = arena.allocate(ValueLayout.JAVA_DOUBLE);
-        checkError(Periphery.pwm_get_duty_cycle(handle, dutyBox), "get_duty_cycle");
-        return dutyBox.get(ValueLayout.JAVA_DOUBLE, 0);
+        lock.lock();
+        try {
+            final var freqBox = arena.allocate(ValueLayout.JAVA_DOUBLE);
+            checkError(Periphery.pwm_get_frequency(handle, freqBox), "get_frequency");
+            return freqBox.get(ValueLayout.JAVA_DOUBLE, 0);
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -145,16 +169,24 @@ public class Pwm implements AutoCloseable {
     }
 
     /**
-     * Closes the PWM device and releases native memory.
+     * Closes the PWM device, silences hardware, and releases native memory.
      */
     @Override
     public void close() {
-        if (handle.address() != 0) {
-            Periphery.pwm_close(handle);
-            log.debug("PWM closed");
-        }
-        if (arena.scope().isAlive()) {
-            arena.close();
+        lock.lock();
+        try {
+            if (handle.address() != 0) {
+                // Silence hardware on close to prevent stuck notes
+                Periphery.pwm_set_duty_cycle_ns(handle, 0L);
+                Periphery.pwm_disable(handle);
+                Periphery.pwm_close(handle);
+                log.debug("PWM closed and silenced");
+            }
+            if (arena.scope().isAlive()) {
+                arena.close();
+            }
+        } finally {
+            lock.unlock();
         }
     }
 }
