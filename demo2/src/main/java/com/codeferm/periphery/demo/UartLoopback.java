@@ -73,7 +73,7 @@ public class UartLoopback implements Callable<Integer> {
 
         log.info("Starting UART Loopback on {} at {} baud", device, baud);
 
-        // Uart class requires explicit bufferSize (10x Standard: No Magic Numbers)
+        // Uart class requires explicit bufferSize (No Magic Numbers)
         try (final var uart = new Uart(device, baud, bufferSize)) {
             final var tx = testStr.getBytes(StandardCharsets.UTF_8);
             final var rx = new byte[tx.length];

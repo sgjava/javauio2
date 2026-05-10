@@ -58,7 +58,7 @@ public class RotaryEncoderDemo implements Callable<Integer> {
      */
     @Override
     public Integer call() {
-        log.info("Starting 10x Edge Interrupt Rotary Demo [CLK: {}, DT: {}, SW: {}]", this.clkLine, this.dtLine, this.swLine);
+        log.info("Starting Edge Interrupt Rotary Demo [CLK: {}, DT: {}, SW: {}]", this.clkLine, this.dtLine, this.swLine);
 
         final var position = new AtomicInteger(0);
 

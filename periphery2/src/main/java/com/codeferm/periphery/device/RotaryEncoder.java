@@ -143,7 +143,7 @@ public class RotaryEncoder implements AutoCloseable {
             log.warn("Kernel edge detection unsupported for GPIO {} line {}.", device, swLine);
         }
 
-        log.atDebug().log("10x Interrupt Rotary Encoder operational. CLK: {}, DT: {}, SW: {}", clkLine, dtLine, swLine);
+        log.atDebug().log("Interrupt Rotary Encoder operational. CLK: {}, DT: {}, SW: {}", clkLine, dtLine, swLine);
     }
 
     /**

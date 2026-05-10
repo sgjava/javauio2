@@ -166,7 +166,7 @@ public class SysLed implements AutoCloseable {
     /**
      * Get the kernel name of the LED.
      * <p>
-     * Utilizes a pre-allocated buffer for the native call to adhere to 10x standards.
+     * Utilizes a pre-allocated buffer for the native call.
      * </p>
      *
      * @return LED name string.
