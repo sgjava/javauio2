@@ -4,8 +4,8 @@
 package com.codeferm.periphery.demo;
 
 import com.codeferm.periphery.NativeLoader;
-import com.codeferm.periphery.SoftPwm;
 import com.codeferm.periphery.device.MultiRgbLed;
+import com.codeferm.periphery.device.PwmDeviceFactory;
 import com.codeferm.periphery.device.PwmLed;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
@@ -17,8 +17,8 @@ import picocli.CommandLine.Option;
 /**
  * High-performance RGB PWM fading demo using the unified PwmDevice interface.
  * <p>
- * Supports both hardware and software PWM modes. This version offloads the timing logic to the PwmDevice implementation,
- * significantly reducing CPU load compared to manual bit-banging in the main loop.
+ * This version utilizes the {@link PwmDeviceFactory} to abstract the transport layer (HW vs SW), allowing the same fading logic to
+ * run on any GPIO or hardware PWM channel.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -26,8 +26,11 @@ import picocli.CommandLine.Option;
  * @since 1.0.0
  */
 @Slf4j
-@Command(name = "RgbFfmPwm", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT")
-public class RgbLed implements Callable<Integer> {
+@Command(name = "RgbFfmPwm",
+        mixinStandardHelpOptions = true,
+        version = "1.0.0-SNAPSHOT",
+        description = "Fades an RGB LED using FFM-backed PWM.")
+public final class RgbLed implements Callable<Integer> {
 
     static {
         NativeLoader.load();
@@ -56,14 +59,18 @@ public class RgbLed implements Callable<Integer> {
      */
     private static final long PERIOD_NS = 1_000_000L;
 
+    /**
+     * Execution logic for the RGB demo.
+     *
+     * @return Exit code.
+     */
     @Override
     public Integer call() {
         log.info("Starting RGB PWM Demo [Mode: {}, R:{}, G:{}, B:{}]", mode, redLine, greenLine, blueLine);
 
-        // Factory-style initialization based on mode
         try (final var led = createLed()) {
             led.enable();
-            final var endTime = System.currentTimeMillis() + (timeout * 1000L);
+            final var endTime = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(timeout);
 
             while (System.currentTimeMillis() < endTime && !Thread.currentThread().isInterrupted()) {
                 // Fade Red
@@ -77,6 +84,10 @@ public class RgbLed implements Callable<Integer> {
             led.off(PERIOD_NS);
             led.disable();
             log.info("Demo completed successfully.");
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Demo interrupted: {}", e.getMessage());
+            return 1;
         } catch (final Exception e) {
             log.error("PWM Demo failed: {}", e.getMessage());
             return 1;
@@ -95,24 +106,28 @@ public class RgbLed implements Callable<Integer> {
     private void fade(final MultiRgbLed led, final int channel, final long endTime) throws InterruptedException {
         // Fade In
         for (var i = 0L; i <= 100; i++) {
-            updateChannel(led, channel, i);
-            TimeUnit.MILLISECONDS.sleep(10);
             if (System.currentTimeMillis() >= endTime) {
                 return;
             }
+            updateChannel(led, channel, i);
+            TimeUnit.MILLISECONDS.sleep(10);
         }
         // Fade Out
         for (var i = 100L; i >= 0; i--) {
-            updateChannel(led, channel, i);
-            TimeUnit.MILLISECONDS.sleep(10);
             if (System.currentTimeMillis() >= endTime) {
                 return;
             }
+            updateChannel(led, channel, i);
+            TimeUnit.MILLISECONDS.sleep(10);
         }
     }
 
     /**
      * Updates the duty cycle for a specific channel while keeping others off.
+     *
+     * @param led The RGB LED device.
+     * @param channel The color channel index.
+     * @param percent The brightness percentage (0-100).
      */
     private void updateChannel(final MultiRgbLed led, final int channel, final long percent) {
         final var dc = (PERIOD_NS * percent) / 100;
@@ -123,25 +138,24 @@ public class RgbLed implements Callable<Integer> {
     }
 
     /**
-     * Helper to create the device based on user options.
+     * Helper to create the device based on user options using the Factory.
+     *
+     * @return Initialized MultiRgbLed.
      */
     private MultiRgbLed createLed() {
-        if (mode.equalsIgnoreCase("HW")) {
-            final var chip = Integer.parseInt(device.replaceAll("[^0-9]", ""));
-            return new MultiRgbLed(
-                    new PwmLed(chip, redLine),
-                    new PwmLed(chip, greenLine),
-                    new PwmLed(chip, blueLine)
-            );
-        } else {
-            return new MultiRgbLed(
-                    new SoftPwm(device, redLine),
-                    new SoftPwm(device, greenLine),
-                    new SoftPwm(device, blueLine)
-            );
-        }
+        // Layered initialization ensures proper resource tracking
+        return new MultiRgbLed(
+                new PwmLed(PwmDeviceFactory.create(mode, device, redLine)),
+                new PwmLed(PwmDeviceFactory.create(mode, device, greenLine)),
+                new PwmLed(PwmDeviceFactory.create(mode, device, blueLine))
+        );
     }
 
+    /**
+     * Main entry point.
+     *
+     * @param args Command line arguments.
+     */
     public static void main(final String... args) {
         System.exit(new CommandLine(new RgbLed()).execute(args));
     }

@@ -4,8 +4,7 @@
 package com.codeferm.periphery.demo;
 
 import com.codeferm.periphery.NativeLoader;
-import com.codeferm.periphery.SoftPwm;
-import com.codeferm.periphery.device.PwmDevice;
+import com.codeferm.periphery.device.PwmDeviceFactory;
 import com.codeferm.periphery.device.PwmLed;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
@@ -16,6 +15,10 @@ import picocli.CommandLine.Option;
 
 /**
  * Unified LED Flash demo supporting Hardware and Software PWM.
+ * <p>
+ * Demonstrates the use of the {@link PwmDeviceFactory} to abstract transport implementation and {@link PwmLed} for device-level
+ * behavior.
+ * </p>
  *
  * @author Steven P. Goldsmith
  * @version 1.0.0
@@ -23,7 +26,7 @@ import picocli.CommandLine.Option;
  */
 @Slf4j
 @Command(name = "LedFlash", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT")
-public class LedFlash implements Callable<Integer> {
+public final class LedFlash implements Callable<Integer> {
 
     static {
         NativeLoader.load();
@@ -41,27 +44,30 @@ public class LedFlash implements Callable<Integer> {
     @Option(names = {"-p", "--period"}, description = "Period in ns.", defaultValue = "1000000")
     private long period;
 
+    /**
+     * Executes the LED flash and fade sequence.
+     *
+     * @return Exit code (0 for success, 1 for failure).
+     */
     @Override
     public Integer call() {
         log.info("Starting LedFlash [Mode: {}, Device: {}, Channel: {}]", mode, device, channel);
 
-        final PwmDevice pwm = mode.equalsIgnoreCase("HW")
-                ? new PwmLed(Integer.parseInt(device), channel)
-                : new SoftPwm(device.startsWith("/") ? device : "/dev/gpiochip0", channel);
+        // Use Factory for transport and Inject into the device wrapper
+        try (final var transport = PwmDeviceFactory.create(mode, device, channel); final var led = new PwmLed(transport)) {
 
-        try (pwm) {
-            // Set initial safe state before enabling
-            pwm.setPulse(period, 0L);
-            pwm.enable();
+            // Set initial safe state
+            led.setPulse(period, 0L);
+            led.enable();
 
             for (var i = 0; i < 10; i++) {
                 // Fade up
-                changeBrightness(pwm, period, 0L, period / 100, 100, 5000);
+                changeBrightness(led, period, 0L, period / 100, 100, 5000);
                 // Fade down
-                changeBrightness(pwm, period, period, -(period / 100), 100, 5000);
+                changeBrightness(led, period, period, -(period / 100), 100, 5000);
             }
 
-            pwm.disable();
+            led.disable();
             log.info("LedFlash completed successfully.");
             return 0;
         } catch (final Exception e) {
@@ -70,16 +76,32 @@ public class LedFlash implements Callable<Integer> {
         }
     }
 
-    private void changeBrightness(final PwmDevice pwm, final long periodNs, final long startDc,
+    /**
+     * Iteratively changes LED brightness to create a fade effect.
+     *
+     * @param led The PwmLed device instance.
+     * @param periodNs Signal period in nanoseconds.
+     * @param startDc Starting duty cycle.
+     * @param dcInc Duty cycle increment per step.
+     * @param count Number of steps.
+     * @param sleepUs Sleep duration in microseconds between steps.
+     * @throws InterruptedException If the thread is interrupted during sleep.
+     */
+    private void changeBrightness(final PwmLed led, final long periodNs, final long startDc,
             final long dcInc, final int count, final int sleepUs) throws InterruptedException {
         var currentDc = startDc;
         for (var i = 0; i < count; i++) {
-            pwm.setPulse(periodNs, currentDc);
+            led.setPulse(periodNs, currentDc);
             TimeUnit.MICROSECONDS.sleep(sleepUs);
             currentDc += dcInc;
         }
     }
 
+    /**
+     * Main entry point for the picocli command.
+     *
+     * @param args Command line arguments.
+     */
     public static void main(final String... args) {
         System.exit(new CommandLine(new LedFlash()).execute(args));
     }

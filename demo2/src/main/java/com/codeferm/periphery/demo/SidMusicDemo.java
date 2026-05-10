@@ -5,30 +5,45 @@ package com.codeferm.periphery.demo;
 
 import com.codeferm.periphery.NativeLoader;
 import com.codeferm.periphery.device.PassiveSpeaker;
+import com.codeferm.periphery.device.PwmDeviceFactory;
 import com.codeferm.periphery.sound.SidVoice;
 import java.util.concurrent.Callable;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
+import picocli.CommandLine.Option;
 
 /**
- * SID Music Sequencer Demo.
+ * SID Music Sequencer Demo using unified PWM transport.
  * <p>
- * Plays a pre-defined melody using the {@link SidVoice} simulator. Demonstrates precise timing of Gate ON/OFF events to create a
- * musical performance.</p>
+ * Plays a pre-defined melody using the {@link SidVoice} simulator. This version defaults to hardware PWM to match the
+ * {@code LedFlash} demo standards.
+ * </p>
  *
  * @author Steven P. Goldsmith
  * @version 1.0.0
  * @since 1.0.0
  */
 @Slf4j
-@Command(name = "SidMusicDemo", mixinStandardHelpOptions = true, version = "1.0.0",
+@Command(name = "SidMusicDemo",
+        mixinStandardHelpOptions = true,
+        version = "1.0.0",
         description = "Plays a melody using the SID ADSR voice simulator.")
 public final class SidMusicDemo implements Callable<Integer> {
 
     static {
         NativeLoader.load();
     }
+
+    // Defaults aligned with LedFlash for consistency
+    @Option(names = {"-m", "--mode"}, description = "Mode: HW or SW.", defaultValue = "HW")
+    private String mode;
+
+    @Option(names = {"-d", "--device"}, description = "PWM chip index or GPIO device.", defaultValue = "0")
+    private String device;
+
+    @Option(names = {"-c", "--channel"}, description = "PWM channel or GPIO line index.", defaultValue = "0")
+    private int channel;
 
     /**
      * Update frequency for the synthesis engine (1000Hz = 1ms resolution).
@@ -46,31 +61,32 @@ public final class SidMusicDemo implements Callable<Integer> {
     /**
      * Executes the song sequencer.
      *
-     * @return Exit code.
+     * @return Exit code (0 success, 1 failure).
      */
     @Override
     public Integer call() {
-        log.info("Starting SID Music Sequencer...");
-        try (final var speaker = new PassiveSpeaker(0, 0)) {
+        log.info("Starting SID Music Sequencer [Mode: {}, Device: {}, Channel: {}]", mode, device, channel);
+
+        try (final var transport = PwmDeviceFactory.create(mode, device, channel); final var speaker = new PassiveSpeaker(transport)) {
+
             // Satisfy Pi driver: set period before enabling
             speaker.setPulse(1_000_000, 0);
             speaker.enable();
+
             final var voice = new SidVoice(speaker, TICKS_PER_SECOND);
-            // Set classic "pluck" ADSR: Fast attack, medium decay, low sustain, fast release
             voice.setAdsr(0.01, 0.1, 0.3, 0.05);
+
             final var startTime = System.nanoTime();
             var tickCount = 0L;
+
             for (final var noteFreq : MELODY) {
                 log.info("Playing Note: {} Hz", noteFreq);
-                // Gate ON
                 voice.gateOn(noteFreq);
-                // Hold note for 400ms
-                tickCount = this.runVoice(voice, tickCount, startTime, 400);
-                // Gate OFF
+                tickCount = runVoice(voice, tickCount, startTime, 400);
                 voice.gateOff();
-                // Let release ring for 100ms
-                tickCount = this.runVoice(voice, tickCount, startTime, 100);
+                tickCount = runVoice(voice, tickCount, startTime, 100);
             }
+
             log.info("Song complete.");
 
         } catch (final Exception e) {
@@ -81,7 +97,7 @@ public final class SidMusicDemo implements Callable<Integer> {
     }
 
     /**
-     * Runs the voice tick loop for a specific number of milliseconds.
+     * Runs the voice tick loop with nanosecond precision.
      *
      * @param voice The SID voice engine.
      * @param startTick The current global tick offset.
@@ -92,13 +108,14 @@ public final class SidMusicDemo implements Callable<Integer> {
     private long runVoice(final SidVoice voice, final long startTick, final long startNanos, final int durationMs) {
         var currentTick = startTick;
         final var endTick = startTick + durationMs;
+
         while (currentTick < endTick) {
             final var targetTime = startNanos + (currentTick * TICK_NS);
-            // Precision sync
+
             while (System.nanoTime() < targetTime) {
                 Thread.onSpinWait();
             }
-            // Update synthesis and hardware
+
             voice.tick();
             currentTick++;
         }
@@ -106,12 +123,11 @@ public final class SidMusicDemo implements Callable<Integer> {
     }
 
     /**
-     * Main entry point.
+     * Main entry point for the picocli command.
      *
-     * @param args CLI arguments.
+     * @param args Command line arguments.
      */
     public static void main(final String[] args) {
-        final var exitCode = new CommandLine(new SidMusicDemo()).execute(args);
-        System.exit(exitCode);
+        System.exit(new CommandLine(new SidMusicDemo()).execute(args));
     }
 }
