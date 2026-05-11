@@ -180,7 +180,7 @@ public class Pwm implements PwmDevice {
                 Periphery.pwm_set_duty_cycle_ns(handle, 0L);
                 Periphery.pwm_disable(handle);
                 Periphery.pwm_close(handle);
-                log.debug("PWM closed and silenced");
+                log.debug("PWM closed");
             }
             if (arena.scope().isAlive()) {
                 arena.close();
