@@ -14,10 +14,15 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
 /**
- * SID Music Sequencer Demo using unified PWM transport.
+ * SID Music Sequencer Demo using a unified FFM-backed PWM transport.
  * <p>
- * Plays a pre-defined melody using the {@link SidVoice} simulator. This version defaults to hardware PWM to match the
- * {@code LedFlash} demo standards.
+ * This demo utilizes the {@link SidVoice} simulator to play a melody with ADSR (Attack, Decay, Sustain, Release) characteristics.
+ * It demonstrates high-precision timing using nanosecond spin-wait loops and the Single-Ownership pattern for native resource
+ * management.
+ * </p>
+ * <p>
+ * The {@link PassiveSpeaker} owns the lifecycle of the factory-created {@code PwmDevice}, ensuring that hardware is silenced and
+ * native memory is unmapped exactly once upon completion or failure.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -27,7 +32,7 @@ import picocli.CommandLine.Option;
 @Slf4j
 @Command(name = "SidMusicDemo",
         mixinStandardHelpOptions = true,
-        version = "1.0.0",
+        version = "1.0.0-SNAPSHOT",
         description = "Plays a melody using the SID ADSR voice simulator.")
 public final class SidMusicDemo implements Callable<Integer> {
 
@@ -35,87 +40,102 @@ public final class SidMusicDemo implements Callable<Integer> {
         NativeLoader.load();
     }
 
-    // Defaults aligned with LedFlash for consistency
+    /**
+     * Operation mode: HW (Hardware Sysfs) or SW (Software GPIO Bit-bang).
+     */
     @Option(names = {"-m", "--mode"}, description = "Mode: HW or SW.", defaultValue = "HW")
     private String mode;
 
-    @Option(names = {"-d", "--device"}, description = "PWM chip index or GPIO device.", defaultValue = "0")
+    /**
+     * Hardware PWM chip index or Software GPIO chip device path.
+     */
+    @Option(names = {"-d", "--device"}, description = "PWM chip index or GPIO chip path.", defaultValue = "0")
     private String device;
 
+    /**
+     * Hardware PWM channel or Software GPIO line index.
+     */
     @Option(names = {"-c", "--channel"}, description = "PWM channel or GPIO line index.", defaultValue = "0")
     private int channel;
 
     /**
-     * Update frequency for the synthesis engine (1000Hz = 1ms resolution).
+     * Synthesis engine update frequency (1000Hz = 1ms resolution).
      */
     private static final long TICKS_PER_SECOND = 1000L;
+
+    /**
+     * Internal tick duration in nanoseconds.
+     */
     private static final long TICK_NS = 1_000_000_000L / TICKS_PER_SECOND;
 
     /**
-     * Simple melody: C4, D4, E4, F4, G4, A4, B4, C5.
+     * Sample melody (C4 to C5 Major scale).
      */
     private static final double[] MELODY = {
         261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 523.25
     };
 
     /**
-     * Executes the song sequencer.
+     * Orchestrates the SID music sequence.
+     * <p>
+     * Initializes the transport and speaker, configures the ADSR envelope, and iterates through the melody with precise timing.
+     * </p>
      *
-     * @return Exit code (0 success, 1 failure).
+     * @return Exit code (0 for success, 1 for error).
      */
     @Override
     public Integer call() {
         log.info("Starting SID Music Sequencer [Mode: {}, Device: {}, Channel: {}]", mode, device, channel);
-
-        try (final var transport = PwmDeviceFactory.create(mode, device, channel); final var speaker = new PassiveSpeaker(transport)) {
-
-            // Satisfy Pi driver: set period before enabling
+        // Single Ownership. Speaker manages the PwmDevice transport lifecycle.
+        try (final var speaker = new PassiveSpeaker(PwmDeviceFactory.create(mode, device, channel))) {
+            // Set safety period and enable output
             speaker.setPulse(1_000_000, 0);
             speaker.enable();
-
             final var voice = new SidVoice(speaker, TICKS_PER_SECOND);
+            // Set classic "pluck" ADSR: Fast attack, medium decay, low sustain, fast release
             voice.setAdsr(0.01, 0.1, 0.3, 0.05);
-
             final var startTime = System.nanoTime();
             var tickCount = 0L;
-
             for (final var noteFreq : MELODY) {
                 log.info("Playing Note: {} Hz", noteFreq);
+                // Gate ON: Begin Attack/Decay/Sustain phase
                 voice.gateOn(noteFreq);
                 tickCount = runVoice(voice, tickCount, startTime, 400);
+                // Gate OFF: Begin Release phase
                 voice.gateOff();
                 tickCount = runVoice(voice, tickCount, startTime, 100);
             }
-
-            log.info("Song complete.");
-
+            log.info("Performance complete.");
+            return 0;
         } catch (final Exception e) {
             log.error("Sequencer failure: {}", e.getMessage());
             return 1;
         }
-        return 0;
     }
 
     /**
-     * Runs the voice tick loop with nanosecond precision.
+     * Runs the SID voice engine for a specified duration using nanosecond precision syncing.
+     * <p>
+     * Uses {@link Thread#onSpinWait()} to minimize jitter during the timing loop, ensuring that synthesis updates occur at exact
+     * 1ms intervals.
+     * </p>
      *
-     * @param voice The SID voice engine.
-     * @param startTick The current global tick offset.
-     * @param startNanos The absolute start time of the performance.
-     * @param durationMs How long to run the loop.
-     * @return The updated global tick offset.
+     * @param voice The SID voice engine to tick.
+     * @param startTick The cumulative tick count from the start of the performance.
+     * @param startNanos The system nanosecond time when the performance began.
+     * @param durationMs The duration to run this segment in milliseconds.
+     * @return The updated cumulative tick count.
      */
     private long runVoice(final SidVoice voice, final long startTick, final long startNanos, final int durationMs) {
         var currentTick = startTick;
         final var endTick = startTick + durationMs;
-
         while (currentTick < endTick) {
             final var targetTime = startNanos + (currentTick * TICK_NS);
-
+            // Precision sync: Busy-wait until target time is reached
             while (System.nanoTime() < targetTime) {
                 Thread.onSpinWait();
             }
-
+            // Update synthesis envelope and hardware pulse width
             voice.tick();
             currentTick++;
         }
@@ -123,9 +143,9 @@ public final class SidMusicDemo implements Callable<Integer> {
     }
 
     /**
-     * Main entry point for the picocli command.
+     * CLI entry point for the SID Music Demo.
      *
-     * @param args Command line arguments.
+     * @param args Command line arguments passed to picocli.
      */
     public static void main(final String[] args) {
         System.exit(new CommandLine(new SidMusicDemo()).execute(args));
