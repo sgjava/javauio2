@@ -30,9 +30,20 @@ public interface PwmDevice extends AutoCloseable {
      * Sets the PWM pulse parameters in nanoseconds.
      *
      * @param periodNs Total period of the signal (e.g., 1,000,000 for 1kHz).
-     * @param dutyCycleNs High-time of the signal. Must be &lt;= periodNs.
+     * @param dutyCycleNs High-time of the signal. Must be <= periodNs.
      */
     void setPulse(final long periodNs, final long dutyCycleNs);
+
+    /**
+     * Utility method to set pulse based on duty cycle percentage.
+     *
+     * * @param periodNs Total period of the signal in nanoseconds.
+     * @param percentage Duty cycle percentage (0.0 to 1.0).
+     */
+    default void setDutyCycle(final long periodNs, final double percentage) {
+        final var validated = Math.clamp(percentage, 0.0, 1.0);
+        setPulse(periodNs, (long) (periodNs * validated));
+    }
 
     /**
      * Closes the device and releases all associated native resources.

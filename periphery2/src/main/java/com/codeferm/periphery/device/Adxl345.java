@@ -18,7 +18,7 @@ import lombok.extern.slf4j.Slf4j;
  * </p>
  *
  * @author Steven P. Goldsmith
- * @version 1.0.0-SNAPSHOT
+ * @version 1.0.0
  * @since 1.0.0
  */
 @Slf4j

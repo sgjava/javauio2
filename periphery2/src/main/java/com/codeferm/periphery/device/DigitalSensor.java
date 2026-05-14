@@ -3,7 +3,6 @@
  */
 package com.codeferm.periphery.device;
 
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.util.concurrent.TimeUnit;
@@ -14,160 +13,126 @@ import org.periphery.Periphery;
 import org.periphery.gpio_handle;
 
 /**
- * High-performance generic digital input sensor using Java Foreign Function & Memory (FFM) API.
+ * Universal digital sensor implementation using FFM for high-performance GPIO.
  * <p>
- * This class provides a low-latency interface for any digital output module (typically LM393 comparator-based) such as sound
- * sensors, reed switches, or IR detectors. It utilizes zero-allocation polling by pre-allocating {@link MemorySegment} buffers in a
- * shared {@link Arena}.
+ * This class is designed for digital modules (Sound, Reed, IR) utilizing the LM393 comparator. It employs a background watch thread
+ * with a trailing lockout window to mask mechanical bounce or acoustic chatter.
  * </p>
  * <p>
- * <b>Key Features:</b>
+ * <b>Implementation Details:</b>
  * <ul>
- * <li><b>State Validation:</b> Uses a trailing lockout window to debounce mechanical switches or mask acoustic echoes/comparator
- * chatter.</li>
- * <li><b>Thread Safety:</b> Employs {@link ReentrantLock} to gate access to the shared native handle and state buffer.</li>
- * <li><b>Resource Management:</b> Implements {@link AutoCloseable} for deterministic lifecycle management of native memory and file
- * descriptors.</li>
+ * <li><b>Inheritance:</b> Extends {@link AbstractDevice} to delegate native plumbing.</li>
+ * <li><b>Zero-Allocation:</b> Reuses a pre-allocated {@code stateBuffer} for polling.</li>
+ * <li><b>Thread Safety:</b> Uses a {@link ReentrantLock} to gate native handle access.</li>
  * </ul>
  * </p>
  *
  * @author Steven P. Goldsmith
- * @version 1.1.0
+ * @version 1.0.0
  * @since 1.0.0
  */
 @Slf4j
-public class DigitalSensor implements AutoCloseable {
+public final class DigitalSensor extends AbstractDevice {
 
     /**
      * Constant for GPIO input direction.
      */
     private static final int GPIO_DIR_IN = 0;
 
-    /**
-     * Lock to synchronize access to the native {@code handle} and {@code stateBuffer}.
-     */
     private final ReentrantLock lock = new ReentrantLock();
-
-    /**
-     * Shared arena for all native memory segments associated with this sensor.
-     */
-    private final Arena arena;
-
-    /**
-     * Native memory segment representing the {@code gpio_handle} struct.
-     */
-    private final MemorySegment handle;
-
-    /**
-     * Pre-allocated segment for reading boolean GPIO states without runtime allocation.
-     */
     private final MemorySegment stateBuffer;
-
-    /**
-     * Lifecycle flag for the background monitoring thread.
-     */
     private volatile boolean watching = false;
 
     /**
      * Constructs a new DigitalSensor and opens the specified native GPIO line.
      *
-     * @param device The absolute path to the GPIO character device (e.g., "/dev/gpiochip0").
-     * @param line The GPIO line number to monitor.
-     * @throws RuntimeException If the native {@code gpio_open} call fails.
+     * @param device GPIO character device path (e.g., "/dev/gpiochip0").
+     * @param line GPIO line number (e.g., 17).
+     * @throws RuntimeException If the native GPIO open call fails.
      */
     public DigitalSensor(final String device, final int line) {
-        this.arena = Arena.ofShared();
-        this.handle = this.arena.allocate(gpio_handle.layout());
-        this.stateBuffer = this.arena.allocate(ValueLayout.JAVA_BOOLEAN);
-        // Convert Java String to native C-string within the arena
-        final var cDevice = this.arena.allocateFrom(device);
-        if (Periphery.gpio_open(this.handle, cDevice, line, GPIO_DIR_IN) < 0) {
-            final var errorMsg = Periphery.gpio_errmsg(this.handle).getString(0);
-            throw new RuntimeException(String.format("Failed to open native GPIO %s Line %d: %s",
-                    device, line, errorMsg));
-        }
-        log.atDebug().log("Digital Sensor initialized: {} [Line {}]", device, line);
+        super(gpio_handle.layout());
+
+        // Pre-allocate buffer in the inherited arena for zero-allocation getValue()
+        this.stateBuffer = getArena().allocate(ValueLayout.JAVA_BOOLEAN);
+        final var cDevice = getArena().allocateFrom(device);
+
+        checkError(Periphery.gpio_open(getHandle(), cDevice, line, GPIO_DIR_IN),
+                String.format("Failed to open GPIO %s Line %d", device, line));
+
+        log.debug("Digital Sensor active on line {}", line);
     }
 
     /**
-     * Performs a synchronous, thread-safe read of the current digital state.
+     * Performs a thread-safe, synchronous read of the current digital state.
      *
-     * @return {@code 1} for Active (High/Logic 1), {@code 0} for Inactive (Low/Logic 0).
+     * @return 1 for High (3.3V), 0 for Low (GND).
      */
     public int getValue() {
-        this.lock.lock();
+        lock.lock();
         try {
-            Periphery.gpio_read(this.handle, this.stateBuffer);
-            return this.stateBuffer.get(ValueLayout.JAVA_BOOLEAN, 0) ? 1 : 0;
+            Periphery.gpio_read(getHandle(), stateBuffer);
+            return stateBuffer.get(ValueLayout.JAVA_BOOLEAN, 0) ? 1 : 0;
         } finally {
-            this.lock.unlock();
+            lock.unlock();
         }
     }
 
     /**
-     * Spawns a high-priority daemon thread to monitor state transitions.
+     * Monitors state transitions using a daemon thread and a lockout window.
      * <p>
-     * The monitor captures every state change but only invokes the {@code callback} once the {@code lockoutMs} period has elapsed
-     * since the last valid transition.
+     * Triggers the provided callback immediately upon a valid state transition, then enters a "lockout" period where further
+     * transitions are ignored.
      * </p>
      *
-     * @param pollIntervalMs The sampling frequency in milliseconds.
-     * @param lockoutMs The dead-time window (ms) to ignore subsequent transitions.
-     * @param callback The consumer for state transition events (1 or 0).
-     * @throws IllegalStateException If a watch thread is already active for this instance.
+     * @param pollInterval Sampling frequency in milliseconds.
+     * @param lockout The quiet duration (ms) required after an event.
+     * @param callback Consumer invoked with the validated state (0 or 1).
+     * @throws IllegalStateException If a watch thread is already running.
      */
-    public void watch(final long pollIntervalMs, final long lockoutMs, final Consumer<Integer> callback) {
+    public void watch(final long pollInterval, final long lockout, final Consumer<Integer> callback) {
         if (this.watching) {
             throw new IllegalStateException("Watch thread is already active");
         }
         this.watching = true;
+
         final var thread = new Thread(() -> {
-            log.info("Digital watch started: {}ms poll / {}ms lockout.", pollIntervalMs, lockoutMs);
-            var lastValidValue = getValue();
-            var lockOutUntil = 0L;
+            log.info("Starting watch loop: {}ms poll, {}ms lockout.", pollInterval, lockout);
+            var lastValue = getValue();
+            var lockoutEnd = 0L;
+
             while (this.watching && !Thread.currentThread().isInterrupted()) {
-                final var currentValue = this.getValue();
-                final var currentTime = System.nanoTime();
-                // Detect state transition (Edge Trigger)
-                if (currentValue != lastValidValue) {
-                    if (currentTime > lockOutUntil) {
-                        lastValidValue = currentValue;
-                        callback.accept(currentValue);
-                        lockOutUntil = currentTime + TimeUnit.MILLISECONDS.toNanos(lockoutMs);
-                    }
+                final var current = getValue();
+                final var now = System.nanoTime();
+
+                // Detect Edge Transition
+                if (current != lastValue && now > lockoutEnd) {
+                    lastValue = current;
+                    callback.accept(current);
+                    lockoutEnd = now + TimeUnit.MILLISECONDS.toNanos(lockout);
                 }
+
                 try {
-                    TimeUnit.MILLISECONDS.sleep(pollIntervalMs);
+                    TimeUnit.MILLISECONDS.sleep(pollInterval);
                 } catch (final InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
             }
-            log.info("Digital watch thread terminating.");
+            log.info("Watch loop terminated.");
         }, "DigitalWatch-Thread");
+
         thread.setDaemon(true);
         thread.start();
     }
 
     /**
-     * Terminates monitoring and releases all native resources.
-     * <p>
-     * Shuts down the background thread, closes the native GPIO file descriptor, and invalidates the {@link Arena}.
-     * </p>
+     * Stops the watch thread and calls the native {@code gpio_close} function.
      */
     @Override
-    public void close() {
+    protected void closeNative() {
         this.watching = false;
-        this.lock.lock();
-        try {
-            // Managed arena handles the cleanup of stateBuffer and handle segments
-            try (this.arena) {
-                if (this.handle.address() != 0) {
-                    Periphery.gpio_close(this.handle);
-                }
-            }
-            log.debug("Digital Sensor resources released.");
-        } finally {
-            this.lock.unlock();
+        if (getHandle().address() != 0) {
+            Periphery.gpio_close(getHandle());
         }
     }
 }

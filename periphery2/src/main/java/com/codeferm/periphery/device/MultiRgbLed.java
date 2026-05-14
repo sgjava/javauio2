@@ -8,8 +8,13 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * Composite device for managing an RGB LED triad.
  * <p>
- * This class coordinates three {@link PwmLed} instances to provide unified RGB control.
+ * Coordinates three {@link PwmLed} instances to provide unified RGB control via PWM. This class follows the Composite pattern and
+ * does not manage native memory directly.
  * </p>
+ *
+ * @author Steven P. Goldsmith
+ * @version 1.0.0
+ * @since 1.0.0
  */
 @Slf4j
 public final class MultiRgbLed implements AutoCloseable {
@@ -31,12 +36,18 @@ public final class MultiRgbLed implements AutoCloseable {
         this.blue = blue;
     }
 
+    /**
+     * Enables all three PWM channels.
+     */
     public void enable() {
         red.enable();
         green.enable();
         blue.enable();
     }
 
+    /**
+     * Disables all three PWM channels.
+     */
     public void disable() {
         red.disable();
         green.disable();
@@ -44,12 +55,12 @@ public final class MultiRgbLed implements AutoCloseable {
     }
 
     /**
-     * Sets the RGB values.
+     * Sets the RGB values by adjusting duty cycles.
      *
-     * @param periodNs Common period for all channels.
-     * @param rNs Red duty cycle.
-     * @param gNs Green duty cycle.
-     * @param bNs Blue duty cycle.
+     * @param periodNs Common period for all channels (nanoseconds).
+     * @param rNs Red duty cycle (nanoseconds).
+     * @param gNs Green duty cycle (nanoseconds).
+     * @param bNs Blue duty cycle (nanoseconds).
      */
     public void setRgb(final long periodNs, final long rNs, final long gNs, final long bNs) {
         red.setPulse(periodNs, rNs);
@@ -57,15 +68,42 @@ public final class MultiRgbLed implements AutoCloseable {
         blue.setPulse(periodNs, bNs);
     }
 
+    /**
+     * Sets all channels to 0 duty cycle.
+     *
+     * * @param periodNs The PWM period to maintain.
+     */
     public void off(final long periodNs) {
         setRgb(periodNs, 0, 0, 0);
     }
 
+    /**
+     * Releases all associated PWM resources.
+     * <p>
+     * Uses a suppressed exception pattern or individual try-catch to ensure all channels attempt closure even if one
+     * fails.
+     * </p>
+     */
     @Override
     public void close() {
         log.debug("Closing MultiRgbLed composite");
-        red.close();
-        green.close();
-        blue.close();
+        // We use a simple sequential close here. 
+        // Since PwmLed.close() is idempotent and handles its own arena, 
+        // we just ensure we call all three.
+        try {
+            red.close();
+        } catch (final Exception e) {
+            log.error("Error closing Red channel", e);
+        }
+        try {
+            green.close();
+        } catch (final Exception e) {
+            log.error("Error closing Green channel", e);
+        }
+        try {
+            blue.close();
+        } catch (final Exception e) {
+            log.error("Error closing Blue channel", e);
+        }
     }
 }

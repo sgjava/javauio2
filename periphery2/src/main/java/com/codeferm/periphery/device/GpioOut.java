@@ -3,7 +3,6 @@
  */
 package com.codeferm.periphery.device;
 
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.util.concurrent.locks.ReentrantLock;
@@ -14,8 +13,11 @@ import org.periphery.gpio_handle;
 /**
  * Generic GPIO output device (LED, Active Buzzer, Relay, etc.) using pure FFM bindings.
  * <p>
- * High-performance, thread-safe control of a GPIO line. This implementation uses pre-allocated native memory segments for hardware
- * handles and state retrieval to ensure zero-allocation during operation.
+ * High-performance, thread-safe control of a GPIO line. This implementation leverages the {@link AbstractDevice} base class to
+ * ensure zero-allocation during operation and deterministic resource cleanup.
+ * </p>
+ * <p>
+ * Extends {@link AbstractDevice} to delegate native plumbing and memory lifecycle management.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -23,7 +25,7 @@ import org.periphery.gpio_handle;
  * @since 1.0.0
  */
 @Slf4j
-public class GpioOut implements AutoCloseable {
+public final class GpioOut extends AbstractDevice {
 
     /**
      * GPIO direction out constant from c-periphery.
@@ -34,16 +36,6 @@ public class GpioOut implements AutoCloseable {
      * Lock for thread-safe hardware access.
      */
     private final ReentrantLock lock = new ReentrantLock();
-
-    /**
-     * Arena for managing native memory.
-     */
-    private final Arena arena;
-
-    /**
-     * Native handle to the GPIO line.
-     */
-    private final MemorySegment handle;
 
     /**
      * Pre-allocated buffer for state reading to avoid GC pressure.
@@ -58,16 +50,15 @@ public class GpioOut implements AutoCloseable {
      * @throws RuntimeException if the GPIO cannot be opened.
      */
     public GpioOut(final String device, final int line) {
-        this.arena = Arena.ofShared();
-        this.handle = arena.allocate(gpio_handle.layout());
-        this.stateBuffer = arena.allocate(ValueLayout.JAVA_BOOLEAN);
+        super(gpio_handle.layout());
 
-        final var cDevice = arena.allocateFrom(device);
+        // Allocate state buffer using the inherited arena
+        this.stateBuffer = getArena().allocate(ValueLayout.JAVA_BOOLEAN);
+        final var cDevice = getArena().allocateFrom(device);
 
-        if (Periphery.gpio_open(handle, cDevice, line, GPIO_DIR_OUT) < 0) {
-            final var error = Periphery.gpio_errmsg(handle).getString(0);
-            throw new RuntimeException("Failed to open GPIO %s line %d: %s".formatted(device, line, error));
-        }
+        checkError(Periphery.gpio_open(getHandle(), cDevice, line, GPIO_DIR_OUT),
+                String.format("Failed to open GPIO %s line %d", device, line));
+
         log.atDebug().log("GPIO output initialized on {} line {}", device, line);
     }
 
@@ -93,7 +84,7 @@ public class GpioOut implements AutoCloseable {
     public void setState(final boolean value) {
         lock.lock();
         try {
-            Periphery.gpio_write(handle, value);
+            Periphery.gpio_write(getHandle(), value);
         } finally {
             lock.unlock();
         }
@@ -107,10 +98,7 @@ public class GpioOut implements AutoCloseable {
     public boolean getState() {
         lock.lock();
         try {
-            if (Periphery.gpio_read(handle, stateBuffer) < 0) {
-                final var error = Periphery.gpio_errmsg(handle).getString(0);
-                throw new RuntimeException("Failed to read GPIO: %s".formatted(error));
-            }
+            checkError(Periphery.gpio_read(getHandle(), stateBuffer), "Failed to read GPIO");
             return stateBuffer.get(ValueLayout.JAVA_BOOLEAN, 0);
         } finally {
             lock.unlock();
@@ -130,16 +118,14 @@ public class GpioOut implements AutoCloseable {
     }
 
     /**
-     * Close the native handle and release native memory.
+     * Releases native resources via the periphery library.
      */
     @Override
-    public void close() {
+    protected void closeNative() {
         lock.lock();
         try {
-            try (arena) {
-                if (handle.address() != 0) {
-                    Periphery.gpio_close(handle);
-                }
+            if (getHandle().address() != 0) {
+                Periphery.gpio_close(getHandle());
             }
         } finally {
             lock.unlock();

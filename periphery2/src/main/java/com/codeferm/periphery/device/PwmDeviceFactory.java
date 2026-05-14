@@ -22,7 +22,7 @@ import lombok.extern.slf4j.Slf4j;
 public final class PwmDeviceFactory {
 
     /**
-     * Private constructor to prevent instantiation of utility class.
+     * Private constructor to prevent instantiation.
      */
     private PwmDeviceFactory() {
         throw new AssertionError("Utility class should not be instantiated.");
@@ -31,8 +31,8 @@ public final class PwmDeviceFactory {
     /**
      * Creates a {@link PwmDevice} implementation based on the specified mode.
      * <p>
-     * If the mode is "HW", the {@code device} parameter is expected to be a string representing the PWM chip (e.g., "/dev/pwmchip0"
-     * or "0"). If the mode is "SW", the {@code device} parameter should be the GPIO chip path (e.g., "/dev/gpiochip0").
+     * For "HW" mode, {@code device} should contain the PWM chip index (e.g., "0" or "/dev/pwmchip0"). For "SW" mode, {@code device}
+     * must be the GPIO chip path.
      * </p>
      *
      * @param mode Execution mode: "HW" for hardware-backed, "SW" for software-timed.
@@ -40,15 +40,19 @@ public final class PwmDeviceFactory {
      * @param line The channel index for hardware or the GPIO line offset for software.
      * @return A concrete implementation of the PwmDevice interface.
      * @throws IllegalArgumentException If an unsupported mode is provided.
-     * @throws NumberFormatException If the hardware device string does not contain a valid chip index.
      */
     public static PwmDevice create(final String mode, final String device, final int line) {
         final var transportMode = mode.toUpperCase();
 
         return switch (transportMode) {
             case "HW" -> {
-                // Extracts the first numeric sequence found in the string
-                final var chipIndex = Integer.parseInt(device.replaceAll("[^0-9]", ""));
+                // Extracts the first numeric sequence found in the string (e.g., /dev/pwmchip1 -> 1)
+                final var numericOnly = device.replaceAll("[^0-9]", "");
+                if (numericOnly.isEmpty()) {
+                    throw new IllegalArgumentException("Hardware PWM device must contain a chip index: " + device);
+                }
+
+                final var chipIndex = Integer.parseInt(numericOnly);
                 log.atDebug().log("Initializing Hardware PWM: chip {}, channel {}", chipIndex, line);
                 yield new Pwm(chipIndex, line);
             }
@@ -58,8 +62,7 @@ public final class PwmDeviceFactory {
             }
             default ->
                 throw new IllegalArgumentException(
-                        "Unsupported PWM mode: %s. Use 'HW' or 'SW'.".formatted(mode)
-                );
+                        "Unsupported PWM mode: %s. Use 'HW' or 'SW'.".formatted(mode));
         };
     }
 }

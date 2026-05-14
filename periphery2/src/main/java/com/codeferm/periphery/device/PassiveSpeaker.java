@@ -8,8 +8,8 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * Passive Speaker implementation supporting both hardware and software PWM.
  * <p>
- * This class provides high-level control over a speaker device via a {@link PwmDevice} transport. It ensures lifecycle safety by
- * mutes and disabling the underlying transport upon closure.
+ * Provides high-level control over a speaker via a {@link PwmDevice} transport. Ensures lifecycle safety by muting and disabling
+ * the underlying transport upon closure to prevent "stuck" tones.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -17,22 +17,21 @@ import lombok.extern.slf4j.Slf4j;
  * @since 1.0.0
  */
 @Slf4j
-public class PassiveSpeaker implements AutoCloseable {
+public final class PassiveSpeaker implements AutoCloseable {
 
     /**
-     * The underlying PWM transport (Hardware or Software).
+     * The underlying PWM transport.
      */
     private final PwmDevice pwm;
 
     /**
      * Constructs a PassiveSpeaker using a unified PWM transport.
      *
-     * @param pwm The {@link PwmDevice} implementation provided by the factory.
+     * @param pwm The PWM implementation (Hardware or Software).
      */
     public PassiveSpeaker(final PwmDevice pwm) {
-        if (log.isDebugEnabled()) {
-            log.debug("Initializing PassiveSpeaker with transport: {}", pwm.getClass().getSimpleName());
-        }
+        log.atDebug().log("Initializing PassiveSpeaker with transport: {}",
+                pwm.getClass().getSimpleName());
         this.pwm = pwm;
     }
 
@@ -53,14 +52,14 @@ public class PassiveSpeaker implements AutoCloseable {
     /**
      * Updates the frequency and duty cycle.
      *
-     * @param periodNs The total duration of a single square-wave cycle in nanoseconds.
-     * @param dutyCycleNs The active high duration in nanoseconds.
+     * @param periodNs Total duration of a square-wave cycle in nanoseconds.
+     * @param dutyCycleNs Active high duration in nanoseconds.
      * @throws IllegalArgumentException If duty cycle exceeds period.
      */
     public void setPulse(final long periodNs, final long dutyCycleNs) {
         if (dutyCycleNs > periodNs) {
-            throw new IllegalArgumentException("Duty cycle (%d) cannot exceed period (%d)"
-                    .formatted(dutyCycleNs, periodNs));
+            throw new IllegalArgumentException(
+                    "Duty cycle (%d) cannot exceed period (%d)".formatted(dutyCycleNs, periodNs));
         }
         pwm.setPulse(periodNs, dutyCycleNs);
     }
@@ -76,24 +75,26 @@ public class PassiveSpeaker implements AutoCloseable {
         // 50% duty cycle for a clean square wave tone
         setPulse(periodNs, periodNs / 2);
         enable();
-        Thread.sleep(durationMs);
-        disable();
+        try {
+            Thread.sleep(durationMs);
+        } finally {
+            // Ensure we stop the tone even if the thread is interrupted
+            disable();
+        }
     }
 
     /**
-     * Safely silences the hardware and releases native resource bindings.
+     * Safely silences hardware and releases native resource bindings.
      * <p>
-     * Ensures duty cycle is reset and PWM is disabled before closing the underlying transport to prevent "stuck notes."
+     * Mutes duty cycle and disables PWM before calling close on the transport.
      * </p>
      */
     @Override
     public void close() {
-        if (log.isDebugEnabled()) {
-            log.debug("Closing PassiveSpeaker and silencing output");
-        }
+        log.atDebug().log("Closing PassiveSpeaker and silencing output");
         try {
-            // Silence immediately
-            pwm.setPulse(1000000L, 0L);
+            // Attempt to silence immediately
+            pwm.setPulse(1_000_000L, 0L);
             pwm.disable();
         } catch (final Exception e) {
             log.warn("Error silencing PWM during speaker close: {}", e.getMessage());
