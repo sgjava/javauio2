@@ -152,14 +152,14 @@ public abstract class Base implements Callable<Integer> {
         try (final var localArena = Arena.ofConfined()) {
             final var maxHeight = U8g2.u8g2_GetMaxCharHeight_Java(u8g2);
             U8g2.u8g2_ClearBuffer(u8g2);
-            String[] words = text.split(" ");
-            StringBuilder currentLine = new StringBuilder();
+            final String[] words = text.split(" ");
+            var currentLine = new StringBuilder();
             var y = maxHeight;
-            for (String word : words) {
+            for (final String word : words) {
                 // Check if adding this word (plus a space) exceeds width
-                String testLine = currentLine.length() == 0 ? word : currentLine + " " + word;
+                final String testLine = currentLine.length() == 0 ? word : currentLine + " " + word;
                 // Allocate temporary string for width measurement
-                MemorySegment testSegment = localArena.allocateFrom(testLine);
+                final MemorySegment testSegment = localArena.allocateFrom(testLine);
                 if (U8g2.u8g2_GetStrWidth(u8g2, testSegment) < width) {
                     // Word fits, update the current line
                     currentLine = new StringBuilder(testLine);
@@ -184,7 +184,7 @@ public abstract class Base implements Callable<Integer> {
 
             try {
                 Thread.sleep(sleep);
-            } catch (InterruptedException e) {
+            } catch (final InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
         }
@@ -208,48 +208,77 @@ public abstract class Base implements Callable<Integer> {
         try (final var arena = Arena.ofConfined()) {
             // Allocate the u8g2 structure based on the jextract layout
             final var u8g2 = arena.allocate(org.u8g2.u8g2_struct.layout());
-            switch (type) {
-                case I2CHW ->
-                    U8g2Factory.initHwI2c(u8g2, setup, rotation, bus, address);
-                case I2CSW ->
-                    U8g2Factory.initSwI2c(u8g2, setup, rotation, gpio, scl, sda, reset, delay);
-                case SPIHW ->
-                    U8g2Factory.initHwSpi(u8g2, setup, rotation, gpio, bus, dc, reset, cs, mode, speed);
-                case SPISW ->
-                    U8g2Factory.initSwSpi(u8g2, setup, rotation, gpio, dc, reset, mosi, sck, cs, delay);
-                case SDL ->
-                    U8g2Factory.initSdl(u8g2, setup, rotation);
-                default ->
-                    throw new RuntimeException(String.format("%s is not a valid type", type));
-            }
-            width = U8g2.u8g2_GetDisplayWidth_Java(u8g2);
-            height = U8g2.u8g2_GetDisplayHeight_Java(u8g2);
-            final var f = U8g2Factory.getFont(font);
-            U8g2.u8g2_SetFont(u8g2, f);
-            U8g2.u8g2_InitDisplay_Java(u8g2);
-            U8g2.u8g2_SetPowerSave_Java(u8g2, (byte) 0);
-            U8g2.u8g2_ClearBuffer(u8g2);
-            run(u8g2);
-            U8g2.u8g2_ClearBuffer(u8g2);
-            U8g2.u8g2_SendBuffer(u8g2);
-            U8g2.u8g2_SetPowerSave_Java(u8g2, (byte) 1);
-            // Clean up
+
+            // Register an emergency JVM hook mapped directly to this execution scope's precise allocations
+            final var emergencyHook = new Thread(() -> executeTeardown(u8g2, arena.scope()));
+            Runtime.getRuntime().addShutdownHook(emergencyHook);
+
             try {
                 switch (type) {
+                    case I2CHW ->
+                        U8g2Factory.initHwI2c(u8g2, setup, rotation, bus, address);
+                    case I2CSW ->
+                        U8g2Factory.initSwI2c(u8g2, setup, rotation, gpio, scl, sda, reset, delay);
+                    case SPIHW ->
+                        U8g2Factory.initHwSpi(u8g2, setup, rotation, gpio, bus, dc, reset, cs, mode, speed);
+                    case SPISW ->
+                        U8g2Factory.initSwSpi(u8g2, setup, rotation, gpio, dc, reset, mosi, sck, cs, delay);
+                    case SDL ->
+                        U8g2Factory.initSdl(u8g2, setup, rotation);
+                    default ->
+                        throw new RuntimeException(String.format("%s is not a valid type", type));
+                }
+                width = U8g2.u8g2_GetDisplayWidth_Java(u8g2);
+                height = U8g2.u8g2_GetDisplayHeight_Java(u8g2);
+                final var f = U8g2Factory.getFont(font);
+                U8g2.u8g2_SetFont(u8g2, f);
+                U8g2.u8g2_InitDisplay_Java(u8g2);
+                U8g2.u8g2_SetPowerSave_Java(u8g2, (byte) 0);
+                U8g2.u8g2_ClearBuffer(u8g2);
+
+                run(u8g2);
+
+            } finally {
+                // Remove the shutdown thread when exiting normally to avoid memory leaks
+                try {
+                    Runtime.getRuntime().removeShutdownHook(emergencyHook);
+                } catch (final IllegalStateException e) {
+                    // Failing to remove when the JVM is already shutting down is standard
+                }
+                // Perform the final processing pass directly on the structured memory state
+                executeTeardown(u8g2, arena.scope());
+            }
+        }
+        return exitCode;
+    }
+
+    /**
+     * Isolated structural teardown block. Safely handles state updates across both standard termination boundaries and sudden
+     * runtime interruptions.
+     *
+     * @param u8g2 The display memory context reference.
+     * @param scope The active segment lifecycle visibility tracking flag.
+     */
+    private void executeTeardown(final MemorySegment u8g2, final MemorySegment.Scope scope) {
+        if (scope.isAlive() && u8g2 != null && u8g2.address() != 0) {
+            log.atDebug().log("Executing hardware clean up and display power sequence...");
+            try {
+                U8g2.u8g2_ClearBuffer(u8g2);
+                U8g2.u8g2_SendBuffer(u8g2);
+                U8g2.u8g2_SetPowerSave_Java(u8g2, (byte) 1);
+
+                switch (type) {
                     case I2CHW, I2CSW -> {
-                        // done_i2c is a class, so we make an invoker and invoke the handle
                         U8g2.done_i2c.makeInvoker().handle().invokeExact();
                     }
                     case SPIHW, SPISW -> {
-                        // Same for SPI
                         U8g2.done_spi.makeInvoker().handle().invokeExact();
                     }
                 }
-            } catch (Throwable t) {
-                log.error("Failed to close transport bus", t);
+            } catch (final Throwable t) {
+                System.err.printf("Failed to safely shut down hardware bus infrastructure: %s%n", t.getMessage());
             }
             U8g2.done_user_data(u8g2);
         }
-        return exitCode;
     }
 }

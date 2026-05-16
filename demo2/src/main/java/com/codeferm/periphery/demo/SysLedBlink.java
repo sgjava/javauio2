@@ -13,7 +13,8 @@ import picocli.CommandLine.Option;
 /**
  * LED blink demo using the high-level FFM-based SysLed wrapper.
  * <p>
- * This demo toggles a system LED on and off for a set number of iterations.
+ * This demo toggles a system LED on and off for a set number of iterations. Includes explicit state recovery traps to ensure a
+ * clean fallback if interrupted.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -41,6 +42,10 @@ public class SysLedBlink extends AbstractDemo {
 
     /**
      * Blinks the system LED and restores its original state upon completion.
+     * <p>
+     * Explicitly hooks into InterruptedException sequences to guarantee physical hardware cleanup runs before the root unmanaged
+     * memory arenas collapse.
+     * </p>
      *
      * @return Exit code (0 for success, 1 for hardware error).
      * @throws Exception On hardware or execution error.
@@ -58,17 +63,24 @@ public class SysLedBlink extends AbstractDemo {
             log.info("LED {} initial state: {}", name, originalValue ? "ON" : "OFF");
             log.info("LED Max Brightness: {}", sysLed.getMaxBrightness());
 
-            for (var i = 0; i < count; i++) {
-                log.debug("Blink iteration {}/{}", i + 1, count);
-                sysLed.write(true);
-                TimeUnit.SECONDS.sleep(1);
-                sysLed.write(false);
-                TimeUnit.SECONDS.sleep(1);
+            try {
+                for (var i = 0; i < count; i++) {
+                    log.debug("Blink iteration {}/{}", i + 1, count);
+                    sysLed.write(true);
+                    TimeUnit.SECONDS.sleep(1);
+                    sysLed.write(false);
+                    TimeUnit.SECONDS.sleep(1);
+                }
+            } catch (final InterruptedException e) {
+                log.warn("Blink loop broken by system shutdown signal. Cleaning hardware flags...");
+                // Restore thread state flag context
+                Thread.currentThread().interrupt();
+            } finally {
+                // Guaranteed safety net line: runs even if SIGINT punches out of the try-block loop
+                log.info("Restoring LED to original state: {}", originalValue);
+                sysLed.write(originalValue);
             }
 
-            // Restore the LED to how we found it
-            log.info("Restoring LED to original state: {}", originalValue);
-            sysLed.write(originalValue);
         } catch (final RuntimeException e) {
             log.error("Hardware interaction failed: {}", e.getMessage());
             exitCode = 1;
