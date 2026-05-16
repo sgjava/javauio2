@@ -7,6 +7,7 @@ import com.codeferm.periphery.device.Ssd1331;
 import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.nio.file.Files;
@@ -57,14 +58,18 @@ public class Video extends Base {
         super.call();
 
         final var frameSize = getWidth() * getHeight() * 2;
-        // Optimization: Allocate native buffer in the Arena once
-        final var frameBuffer = getOled().getArena().allocate(frameSize);
-        // Optimization: Reuse heap buffer for I/O
+
+        // Optimization: Re-use heap buffer for I/O to avoid GC thrashing
         final var heapBuffer = new byte[frameSize];
 
         log.info("Starting video playback: {} ({} FPS)", fileName, getFps());
 
-        try (final var inputStream = getInputStream()) {
+        // Create a local confined arena for the demo frame lifecycle execution path
+        try (final var localArena = Arena.ofConfined(); final var inputStream = getInputStream()) {
+
+            // Optimization: Allocate native buffer in the local Arena once
+            final var frameBuffer = localArena.allocate(frameSize);
+
             // Set SSD1331 address window for full-screen update
             getOled().writeCommand(new byte[]{
                 Ssd1331.SET_COLUMN_ADDRESS, 0, (byte) (getWidth() - 1),
@@ -97,7 +102,7 @@ public class Video extends Base {
                 }
             }
             log.info("Video finished. Frames processed: {}", frameCount);
-        } catch (IOException e) {
+        } catch (final IOException e) {
             log.error("Failed to play video: {}", e.getMessage());
             return 1;
         } finally {
