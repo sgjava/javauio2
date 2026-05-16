@@ -3,9 +3,8 @@
  */
 package com.codeferm.periphery;
 
+import com.codeferm.periphery.device.AbstractDevice;
 import com.codeferm.periphery.device.PwmDevice;
-import java.lang.foreign.Arena;
-import java.lang.foreign.MemorySegment;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 import lombok.extern.slf4j.Slf4j;
@@ -16,7 +15,7 @@ import org.periphery.gpio_handle;
  * Software-based Pulse Width Modulation (PWM) implementation using FFM and a high-priority dedicated thread.
  * <p>
  * This class provides PWM functionality for GPIO pins that do not have hardware PWM support. It uses a precision busy-wait loop to
- * maintain timing accuracy.
+ * maintain timing accuracy and inherits automated safe-teardown from {@link AbstractDevice}.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -24,22 +23,12 @@ import org.periphery.gpio_handle;
  * @since 1.0.0
  */
 @Slf4j
-public class SoftPwm implements PwmDevice {
+public class SoftPwm extends AbstractDevice implements PwmDevice {
 
     /**
-     * GPIO direction output constant.
+     * GPIO direction output constant from c-periphery.
      */
     private static final int GPIO_DIR_OUT = 1;
-
-    /**
-     * Native memory arena for handle allocation.
-     */
-    private final Arena arena;
-
-    /**
-     * Native memory segment for the c-periphery GPIO handle.
-     */
-    private final MemorySegment handle;
 
     /**
      * Dedicated thread for generating the pulse signal.
@@ -79,12 +68,16 @@ public class SoftPwm implements PwmDevice {
      * @throws RuntimeException If the GPIO device cannot be opened.
      */
     public SoftPwm(final String device, final int line) {
-        this.arena = Arena.ofShared();
-        this.handle = arena.allocate(gpio_handle.layout());
-        final var cDevice = arena.allocateFrom(device);
+        // Passes layout up to handle automated registration and memory tracking
+        super(gpio_handle.layout());
 
-        if (Periphery.gpio_open(handle, cDevice, line, GPIO_DIR_OUT) < 0) {
-            final var error = Periphery.gpio_errmsg(handle).getString(0);
+        final var cDevice = getArena().allocateFrom(device);
+
+        if (Periphery.gpio_open(getHandle(), cDevice, line, GPIO_DIR_OUT) < 0) {
+            final var error = Periphery.gpio_errmsg(getHandle()).getString(0);
+            if (getArena().scope().isAlive()) {
+                getArena().close();
+            }
             throw new RuntimeException("Failed to open GPIO line %d: %s".formatted(line, error));
         }
 
@@ -149,14 +142,18 @@ public class SoftPwm implements PwmDevice {
     }
 
     /**
-     * Writes the state to the GPIO pin using the native c-periphery call.
+     * Writes the state to the GPIO pin using the native c-periphery call. Guarded with a ReentrantLock to secure segment safety
+     * during thread cleanup.
      *
      * @param state True for HIGH, false for LOW.
      */
     private void write(final boolean state) {
         lock.lock();
         try {
-            Periphery.gpio_write(handle, state);
+            // Check scope health inside lock to prevent race conditions during close
+            if (getHandle().address() != 0 && getArena().scope().isAlive()) {
+                Periphery.gpio_write(getHandle(), state);
+            }
         } finally {
             lock.unlock();
         }
@@ -169,36 +166,41 @@ public class SoftPwm implements PwmDevice {
      */
     private void busyWait(final long ns) {
         final var start = System.nanoTime();
-        while (System.nanoTime() - start < ns) {
+        while (System.nanoTime() - start < ns && running.get()) {
             Thread.onSpinWait();
         }
     }
 
     /**
-     * Stops the pulse thread, releases the native GPIO handle, and closes the arena.
+     * Template implementation called by AbstractDevice. Coordinates the safe destruction of the generator thread before dropping
+     * file nodes.
      */
     @Override
-    public void close() {
-        log.debug("Closing Software PWM");
+    protected void closeNative() {
+        log.debug("Closing Software PWM and stopping generator thread");
+
+        // 1. Signal the pulse loop thread to break its execution boundaries
         running.set(false);
         enabled.set(false);
 
+        // 2. Join the thread to guarantee it has left the spin-wait and write blocks
         try {
             if (pulseThread.isAlive()) {
-                pulseThread.join(100);
+                pulseThread.join(150);
             }
         } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();
-            log.error("Interrupted while stopping PWM thread");
+            log.error("Interrupted while stopping software PWM thread: {}", e.getMessage());
         }
 
+        // 3. Acquire lock to perform safe hardware termination and close handles
         lock.lock();
         try {
-            if (handle.address() != 0) {
-                Periphery.gpio_write(handle, false);
-                Periphery.gpio_close(handle);
+            if (getHandle().address() != 0) {
+                Periphery.gpio_write(getHandle(), false);
+                Periphery.gpio_close(getHandle());
+                log.debug("Software PWM hardware line dropped LOW and closed cleanly.");
             }
-            arena.close();
         } finally {
             lock.unlock();
         }

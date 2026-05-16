@@ -3,13 +3,10 @@
  */
 package com.codeferm.periphery;
 
+import com.codeferm.periphery.device.AbstractDevice;
 import com.codeferm.periphery.device.PwmDevice;
-import java.lang.foreign.Arena;
-import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.util.concurrent.locks.ReentrantLock;
-import lombok.AccessLevel;
-import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.periphery.Periphery;
 import org.periphery.pwm_handle;
@@ -18,7 +15,7 @@ import org.periphery.pwm_handle;
  * c-periphery PWM wrapper functions for Linux userspace sysfs PWMs using FFM.
  * <p>
  * This implementation fulfills the {@link PwmDevice} contract, providing thread-safe, high-performance interaction with Linux PWM
- * sysfs via Project Panama.
+ * sysfs via Project Panama. It inherits automated cleanup from {@link AbstractDevice}.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -26,7 +23,7 @@ import org.periphery.pwm_handle;
  * @since 1.0.0
  */
 @Slf4j
-public class Pwm implements PwmDevice {
+public class Pwm extends AbstractDevice implements PwmDevice {
 
     /**
      * Successful operation constant from c-periphery.
@@ -39,17 +36,6 @@ public class Pwm implements PwmDevice {
     private final ReentrantLock lock = new ReentrantLock();
 
     /**
-     * Arena for native memory lifecycle management.
-     */
-    private final Arena arena;
-
-    /**
-     * Native memory segment for the c-periphery PWM handle structure.
-     */
-    @Getter(AccessLevel.PUBLIC)
-    private final MemorySegment handle;
-
-    /**
      * Open the sysfs PWM with the specified chip and channel.
      *
      * @param chip PWM chip number.
@@ -57,16 +43,15 @@ public class Pwm implements PwmDevice {
      * @throws RuntimeException If handle allocation or opening fails.
      */
     public Pwm(final int chip, final int channel) {
-        this.arena = Arena.ofShared();
-        this.handle = arena.allocate(pwm_handle.layout());
+        // Passes the c-periphery struct layout up to register with HardwareRegistry and allocate native memory
+        super(pwm_handle.layout());
 
-        if (handle.address() == 0) {
-            throw new RuntimeException("Failed to allocate native PWM handle memory");
-        }
-
-        if (Periphery.pwm_open(handle, chip, channel) != PWM_SUCCESS) {
+        if (Periphery.pwm_open(getHandle(), chip, channel) != PWM_SUCCESS) {
             final var error = getErrorMessage();
-            arena.close();
+            // Invalidate the inherited arena right away if initialization fails
+            if (getArena().scope().isAlive()) {
+                getArena().close();
+            }
             throw new RuntimeException("Failed to open PWM chip %d channel %d: %s".formatted(chip, channel, error));
         }
 
@@ -80,7 +65,7 @@ public class Pwm implements PwmDevice {
     public void enable() {
         lock.lock();
         try {
-            checkError(Periphery.pwm_enable(handle), "enable");
+            checkError(Periphery.pwm_enable(getHandle()), "enable");
         } finally {
             lock.unlock();
         }
@@ -93,7 +78,7 @@ public class Pwm implements PwmDevice {
     public void disable() {
         lock.lock();
         try {
-            checkError(Periphery.pwm_disable(handle), "disable");
+            checkError(Periphery.pwm_disable(getHandle()), "disable");
         } finally {
             lock.unlock();
         }
@@ -109,8 +94,8 @@ public class Pwm implements PwmDevice {
     public void setPulse(final long periodNs, final long dutyCycleNs) {
         lock.lock();
         try {
-            checkError(Periphery.pwm_set_period_ns(handle, periodNs), "set_period_ns");
-            checkError(Periphery.pwm_set_duty_cycle_ns(handle, dutyCycleNs), "set_duty_cycle_ns");
+            checkError(Periphery.pwm_set_period_ns(getHandle(), periodNs), "set_period_ns");
+            checkError(Periphery.pwm_set_duty_cycle_ns(getHandle(), dutyCycleNs), "set_duty_cycle_ns");
         } finally {
             lock.unlock();
         }
@@ -124,7 +109,7 @@ public class Pwm implements PwmDevice {
     public void setFrequency(final double frequency) {
         lock.lock();
         try {
-            checkError(Periphery.pwm_set_frequency(handle, frequency), "set_frequency");
+            checkError(Periphery.pwm_set_frequency(getHandle(), frequency), "set_frequency");
         } finally {
             lock.unlock();
         }
@@ -138,8 +123,8 @@ public class Pwm implements PwmDevice {
     public double getFrequency() {
         lock.lock();
         try {
-            final var freqBox = arena.allocate(ValueLayout.JAVA_DOUBLE);
-            checkError(Periphery.pwm_get_frequency(handle, freqBox), "get_frequency");
+            final var freqBox = getArena().allocate(ValueLayout.JAVA_DOUBLE);
+            checkError(Periphery.pwm_get_frequency(getHandle(), freqBox), "get_frequency");
             return freqBox.get(ValueLayout.JAVA_DOUBLE, 0);
         } finally {
             lock.unlock();
@@ -152,7 +137,8 @@ public class Pwm implements PwmDevice {
      * @param result Return code from native function.
      * @param op Operation name for logging.
      */
-    private void checkError(final int result, final String op) {
+    @Override
+    protected void checkError(final int result, final String op) {
         if (result < PWM_SUCCESS) {
             throw new RuntimeException("PWM %s failed: %s".formatted(op, getErrorMessage()));
         }
@@ -164,26 +150,24 @@ public class Pwm implements PwmDevice {
      * @return Error message string.
      */
     public String getErrorMessage() {
-        final var ptr = Periphery.pwm_errmsg(handle);
+        final var ptr = Periphery.pwm_errmsg(getHandle());
         return ptr.address() == 0 ? "Unknown error" : ptr.getString(0);
     }
 
     /**
-     * Closes the PWM device, silences hardware, and releases native memory.
+     * Template implementation called by AbstractDevice during close or emergency system shutdown. Enforces an absolute zero-energy
+     * hardware state before cutting loose the native sysfs nodes.
      */
     @Override
-    public void close() {
+    protected void closeNative() {
         lock.lock();
         try {
-            if (handle.address() != 0) {
-                // Silence hardware on close to prevent stuck notes
-                Periphery.pwm_set_duty_cycle_ns(handle, 0L);
-                Periphery.pwm_disable(handle);
-                Periphery.pwm_close(handle);
-                log.debug("PWM closed");
-            }
-            if (arena.scope().isAlive()) {
-                arena.close();
+            if (getHandle().address() != 0) {
+                // Force state down to zero energy first so kernel generator doesn't freeze 'ON'
+                Periphery.pwm_set_duty_cycle_ns(getHandle(), 0L);
+                Periphery.pwm_disable(getHandle());
+                Periphery.pwm_close(getHandle());
+                log.debug("PWM hardware safely de-energized and closed.");
             }
         } finally {
             lock.unlock();
