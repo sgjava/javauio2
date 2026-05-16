@@ -3,10 +3,8 @@
  */
 package com.codeferm.periphery.demo;
 
-import com.codeferm.periphery.NativeLoader;
 import com.codeferm.periphery.device.Adxl345;
 import com.codeferm.periphery.device.I2cBus;
-import java.util.concurrent.Callable;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
@@ -26,11 +24,7 @@ import picocli.CommandLine.Option;
 @Slf4j
 @Command(name = "Adxl345Demo", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "Polls ADXL345 accelerometer data over I2C.")
-public class Adxl345Demo implements Callable<Integer> {
-
-    static {
-        NativeLoader.load();
-    }
+public final class Adxl345Demo extends AbstractDemo {
 
     @Option(names = {"-d", "--device"}, description = "I2C device path, ${DEFAULT-VALUE} by default.")
     private String device = "/dev/i2c-1";
@@ -52,10 +46,7 @@ public class Adxl345Demo implements Callable<Integer> {
         final var address = Short.parseShort(addressHex, 16);
 
         // Add shutdown hook to fix terminal on Ctrl+C
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            System.out.println(); // Force a newline so the shell prompt is clean
-            System.out.flush();
-        }));
+        addTerminalHook();
 
         log.info("Starting ADXL345 Demo on {} (Address: 0x{})", device, addressHex);
 

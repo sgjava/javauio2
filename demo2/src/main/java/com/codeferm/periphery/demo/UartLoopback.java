@@ -3,10 +3,8 @@
  */
 package com.codeferm.periphery.demo;
 
-import com.codeferm.periphery.NativeLoader;
 import com.codeferm.periphery.device.Uart;
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.Callable;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
@@ -29,12 +27,7 @@ import picocli.CommandLine.Option;
 @Slf4j
 @Command(name = "UartLoopback", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "UART loopback test (requires RX to TX jumper).")
-public class UartLoopback implements Callable<Integer> {
-
-    static {
-        // Load native periphery library for FFM usage
-        NativeLoader.load();
-    }
+public class UartLoopback extends AbstractDemo {
 
     /**
      * Serial device path option.
@@ -65,10 +58,12 @@ public class UartLoopback implements Callable<Integer> {
      * </p>
      *
      * @return Exit code (0 for success, 1 for failure or data mismatch).
+     * @throws Exception On hardware or execution error.
      */
     @Override
-    public Integer call() {
+    public Integer call() throws Exception {
         var exitCode = 0;
+        addTerminalHook();
         final var testStr = "Hello Periphery FFM!";
 
         log.info("Starting UART Loopback on {} at {} baud", device, baud);
@@ -97,7 +92,7 @@ public class UartLoopback implements Callable<Integer> {
                     exitCode = 1;
                 }
             } else {
-                log.error("No data received. Is the jumper connected between RX (Pin 10) and TX (Pin 8)?");
+                log.error("No data received. Is the jumper connected between RX and TX?");
                 exitCode = 1;
             }
         } catch (final Exception e) {

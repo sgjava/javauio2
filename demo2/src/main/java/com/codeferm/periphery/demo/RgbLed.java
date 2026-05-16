@@ -3,11 +3,9 @@
  */
 package com.codeferm.periphery.demo;
 
-import com.codeferm.periphery.NativeLoader;
 import com.codeferm.periphery.device.MultiRgbLed;
 import com.codeferm.periphery.device.PwmDeviceFactory;
 import com.codeferm.periphery.device.PwmLed;
-import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine;
@@ -31,11 +29,7 @@ import picocli.CommandLine.Option;
         mixinStandardHelpOptions = true,
         version = "1.0.0-SNAPSHOT",
         description = "Fades an RGB LED using FFM-backed PWM.")
-public final class RgbLed implements Callable<Integer> {
-
-    static {
-        NativeLoader.load();
-    }
+public final class RgbLed extends AbstractDemo {
 
     /**
      * Operation mode: HW (Hardware Sysfs) or SW (Software GPIO Bit-bang).
@@ -86,14 +80,18 @@ public final class RgbLed implements Callable<Integer> {
      * </p>
      *
      * @return Exit code (0 for success, 1 for failure).
+     * @throws Exception On hardware or execution error.
      */
     @Override
-    public Integer call() {
+    public Integer call() throws Exception {
+        addTerminalHook();
         log.info("Starting RGB PWM Demo [Mode: {}, Device: {}]", mode, device);
+
         // Single Ownership via createLed() factory helper
         try (final var led = createLed()) {
             led.enable();
             final var endTime = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(timeout);
+
             while (System.currentTimeMillis() < endTime && !Thread.currentThread().isInterrupted()) {
                 log.debug("Fading Red...");
                 fade(led, 0, endTime);
@@ -102,6 +100,7 @@ public final class RgbLed implements Callable<Integer> {
                 log.debug("Fading Blue...");
                 fade(led, 2, endTime);
             }
+
             led.off(PERIOD_NS);
             led.disable();
             log.info("Demo completed successfully.");

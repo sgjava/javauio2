@@ -3,9 +3,7 @@
  */
 package com.codeferm.periphery.demo;
 
-import com.codeferm.periphery.NativeLoader;
 import com.codeferm.periphery.device.GpioOut;
-import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine;
@@ -28,11 +26,7 @@ import picocli.CommandLine.Option;
         mixinStandardHelpOptions = true,
         version = "1.0.0",
         description = "Toggles a GPIO output device (Buzzer/LED) using FFM and TimeUnit.")
-public final class GpioOutDemo implements Callable<Integer> {
-
-    static {
-        NativeLoader.load();
-    }
+public final class GpioOutDemo extends AbstractDemo {
 
     /**
      * GPIO device path.
@@ -65,6 +59,9 @@ public final class GpioOutDemo implements Callable<Integer> {
      */
     @Override
     public Integer call() {
+        // Fix terminal formatting on interrupt
+        addTerminalHook();
+
         log.info("Starting GpioOutDemo on {} line {}", device, line);
 
         try (final var out = new GpioOut(device, line)) {
@@ -80,12 +77,12 @@ public final class GpioOutDemo implements Callable<Integer> {
                 }
             }
             log.info("Demo completed successfully.");
-        } catch (InterruptedException e) {
+        } catch (final InterruptedException e) {
             // Restore interrupted state
             Thread.currentThread().interrupt();
             log.error("Demo interrupted: {}", e.getMessage());
             return 1;
-        } catch (Exception e) {
+        } catch (final Exception e) {
             log.error("Execution failed: {}", e.getMessage());
             return 1;
         }

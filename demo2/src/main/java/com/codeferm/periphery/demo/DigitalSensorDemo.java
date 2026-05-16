@@ -3,9 +3,7 @@
  */
 package com.codeferm.periphery.demo;
 
-import com.codeferm.periphery.NativeLoader;
 import com.codeferm.periphery.device.DigitalSensor;
-import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine;
@@ -28,11 +26,7 @@ import picocli.CommandLine.Option;
         mixinStandardHelpOptions = true,
         version = "1.0.0",
         description = "Monitors digital state transitions using FFM-backed GPIO.")
-public final class DigitalSensorDemo implements Callable<Integer> {
-
-    static {
-        NativeLoader.load();
-    }
+public final class DigitalSensorDemo extends AbstractDemo {
 
     /**
      * GPIO character device path.
@@ -77,9 +71,13 @@ public final class DigitalSensorDemo implements Callable<Integer> {
      */
     @Override
     public Integer call() {
+        // Add shutdown hook to fix terminal on Ctrl+C via base class
+        addTerminalHook();
+
         log.info("Starting {} monitor on {} Line {} for {}s", sensorName, device, line, timeout);
         final var startTime = System.nanoTime();
         final var timeoutNanos = TimeUnit.SECONDS.toNanos(timeout);
+
         // Standard resource management via try-with-resources
         try (final var sensor = new DigitalSensor(device, line)) {
             // Initiate the non-blocking watch thread
@@ -87,7 +85,9 @@ public final class DigitalSensorDemo implements Callable<Integer> {
                 final var stateLabel = (state == 0) ? "HIGH" : "LOW";
                 log.info("[{}] State: {}", sensorName, stateLabel);
             });
+
             log.info("Monitoring active. Auto-closing in {} seconds...", timeout);
+
             // Loop until interrupted or timeout reached
             while (!Thread.currentThread().isInterrupted()) {
                 final var elapsed = System.nanoTime() - startTime;
@@ -105,6 +105,7 @@ public final class DigitalSensorDemo implements Callable<Integer> {
             log.error("Execution failed: {}", e.getMessage());
             return 1;
         }
+
         log.info("Demo exited cleanly.");
         return 0;
     }

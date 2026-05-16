@@ -3,9 +3,7 @@
  */
 package com.codeferm.periphery.demo;
 
-import com.codeferm.periphery.NativeLoader;
 import com.codeferm.periphery.device.SysLed;
-import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine;
@@ -25,14 +23,7 @@ import picocli.CommandLine.Option;
 @Slf4j
 @Command(name = "SysLedBlink", mixinStandardHelpOptions = true, version = "1.0.0",
         description = "Turn LED on and off using FFM-based SysLed device class.")
-public class SysLedBlink implements Callable<Integer> {
-
-    /**
-     * Load the native periphery library and register with the ClassLoader. Required for FFM native access [cite: 2026-02-08].
-     */
-    static {
-        NativeLoader.load();
-    }
+public class SysLedBlink extends AbstractDemo {
 
     /**
      * System LED name as found in /sys/class/leds/. Default set to Raspberry PI ACT (green led).
@@ -52,18 +43,21 @@ public class SysLedBlink implements Callable<Integer> {
      * Blinks the system LED and restores its original state upon completion.
      *
      * @return Exit code (0 for success, 1 for hardware error).
-     * @throws InterruptedException If the blink sleep is interrupted.
+     * @throws Exception On hardware or execution error.
      */
     @Override
-    public Integer call() throws InterruptedException {
+    public Integer call() throws Exception {
         var exitCode = 0;
+        addTerminalHook();
         log.info("Starting SysLedBlink on LED: {}", name);
-        // SysLed manages the Arena and MemorySegments for zero-allocation I/O [cite: 2026-02-13]
+
+        // SysLed manages the Arena and MemorySegments for zero-allocation I/O
         try (final var sysLed = new SysLed(name)) {
             // Record original state to be a good citizen on exit
             final var originalValue = sysLed.read();
             log.info("LED {} initial state: {}", name, originalValue ? "ON" : "OFF");
             log.info("LED Max Brightness: {}", sysLed.getMaxBrightness());
+
             for (var i = 0; i < count; i++) {
                 log.debug("Blink iteration {}/{}", i + 1, count);
                 sysLed.write(true);
@@ -71,6 +65,7 @@ public class SysLedBlink implements Callable<Integer> {
                 sysLed.write(false);
                 TimeUnit.SECONDS.sleep(1);
             }
+
             // Restore the LED to how we found it
             log.info("Restoring LED to original state: {}", originalValue);
             sysLed.write(originalValue);

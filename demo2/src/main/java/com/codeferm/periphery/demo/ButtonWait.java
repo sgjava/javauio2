@@ -3,9 +3,7 @@
  */
 package com.codeferm.periphery.demo;
 
-import com.codeferm.periphery.NativeLoader;
 import com.codeferm.periphery.device.BlockingButton;
-import java.util.concurrent.Callable;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
@@ -25,12 +23,7 @@ import picocli.CommandLine.Option;
 @Slf4j
 @Command(name = "ButtonWait", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "Uses edge detection to wait for button press via FFM.")
-public class ButtonWait implements Callable<Integer> {
-
-    static {
-        // Load the native library for underlying FFM hardware access
-        NativeLoader.load();
-    }
+public final class ButtonWait extends AbstractDemo {
 
     /**
      * GPIO device path.
@@ -54,10 +47,15 @@ public class ButtonWait implements Callable<Integer> {
     @Override
     public Integer call() {
         var exitCode = 0;
+
+        // Ensure clean terminal output on interrupt via base class
+        addTerminalHook();
+
         log.info("Starting ButtonWait on {} line {}", device, line);
         try (final var button = new BlockingButton(device, line)) {
             log.info("Monitoring for edges. Idle 10 seconds to exit.");
             BlockingButton.ButtonEvent event;
+
             // Use the pre-allocated native buffer via waitForEvent
             while ((event = button.waitForEvent(10000)) != null) {
                 final var edgeStr = BlockingButton.edgeToString(event.edge());

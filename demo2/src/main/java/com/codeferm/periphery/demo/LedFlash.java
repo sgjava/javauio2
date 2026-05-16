@@ -3,10 +3,8 @@
  */
 package com.codeferm.periphery.demo;
 
-import com.codeferm.periphery.NativeLoader;
 import com.codeferm.periphery.device.PwmDeviceFactory;
 import com.codeferm.periphery.device.PwmLed;
-import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine;
@@ -29,11 +27,7 @@ import picocli.CommandLine.Option;
         mixinStandardHelpOptions = true,
         version = "1.0.0-SNAPSHOT",
         description = "Flashes and fades an LED using hardware or software PWM.")
-public final class LedFlash implements Callable<Integer> {
-
-    static {
-        NativeLoader.load();
-    }
+public final class LedFlash extends AbstractDemo {
 
     /**
      * Operation mode: HW (Hardware Sysfs) or SW (Software GPIO Bit-bang).
@@ -70,6 +64,9 @@ public final class LedFlash implements Callable<Integer> {
      */
     @Override
     public Integer call() {
+        // Clean up terminal on interrupt
+        addTerminalHook();
+
         log.info("Starting LedFlash [Mode: {}, Device: {}, Channel: {}]", mode, device, channel);
 
         // Single Ownership. PwmLed manages the PwmDevice transport lifecycle.
@@ -77,6 +74,7 @@ public final class LedFlash implements Callable<Integer> {
             // Set initial safe state (Off) and enable output
             led.setPulse(period, 0L);
             led.enable();
+
             for (var i = 0; i < 10; i++) {
                 log.debug("Fade cycle: {}", i + 1);
                 // Fade up
@@ -84,6 +82,7 @@ public final class LedFlash implements Callable<Integer> {
                 // Fade down
                 changeBrightness(led, period, period, -(period / 100), 100, 5000);
             }
+
             led.disable();
             log.info("LedFlash completed successfully.");
             return 0;

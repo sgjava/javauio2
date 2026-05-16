@@ -3,11 +3,9 @@
  */
 package com.codeferm.periphery.demo;
 
-import com.codeferm.periphery.NativeLoader;
 import com.codeferm.periphery.device.PassiveSpeaker;
 import com.codeferm.periphery.device.PwmDeviceFactory;
 import com.codeferm.periphery.sound.SidVoice;
-import java.util.concurrent.Callable;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
@@ -34,11 +32,7 @@ import picocli.CommandLine.Option;
         mixinStandardHelpOptions = true,
         version = "1.0.0-SNAPSHOT",
         description = "Plays a melody using the SID ADSR voice simulator.")
-public final class SidMusicDemo implements Callable<Integer> {
-
-    static {
-        NativeLoader.load();
-    }
+public final class SidMusicDemo extends AbstractDemo {
 
     /**
      * Operation mode: HW (Hardware Sysfs) or SW (Software GPIO Bit-bang).
@@ -82,29 +76,37 @@ public final class SidMusicDemo implements Callable<Integer> {
      * </p>
      *
      * @return Exit code (0 for success, 1 for error).
+     * @throws Exception On hardware or execution error.
      */
     @Override
-    public Integer call() {
+    public Integer call() throws Exception {
+        addTerminalHook();
         log.info("Starting SID Music Sequencer [Mode: {}, Device: {}, Channel: {}]", mode, device, channel);
+
         // Single Ownership. Speaker manages the PwmDevice transport lifecycle.
         try (final var speaker = new PassiveSpeaker(PwmDeviceFactory.create(mode, device, channel))) {
             // Set safety period and enable output
             speaker.setPulse(1_000_000, 0);
             speaker.enable();
+
             final var voice = new SidVoice(speaker, TICKS_PER_SECOND);
             // Set classic "pluck" ADSR: Fast attack, medium decay, low sustain, fast release
             voice.setAdsr(0.01, 0.1, 0.3, 0.05);
+
             final var startTime = System.nanoTime();
             var tickCount = 0L;
+
             for (final var noteFreq : MELODY) {
                 log.info("Playing Note: {} Hz", noteFreq);
                 // Gate ON: Begin Attack/Decay/Sustain phase
                 voice.gateOn(noteFreq);
                 tickCount = runVoice(voice, tickCount, startTime, 400);
+
                 // Gate OFF: Begin Release phase
                 voice.gateOff();
                 tickCount = runVoice(voice, tickCount, startTime, 100);
             }
+
             log.info("Performance complete.");
             return 0;
         } catch (final Exception e) {
@@ -129,12 +131,15 @@ public final class SidMusicDemo implements Callable<Integer> {
     private long runVoice(final SidVoice voice, final long startTick, final long startNanos, final int durationMs) {
         var currentTick = startTick;
         final var endTick = startTick + durationMs;
+
         while (currentTick < endTick) {
             final var targetTime = startNanos + (currentTick * TICK_NS);
+
             // Precision sync: Busy-wait until target time is reached
             while (System.nanoTime() < targetTime) {
                 Thread.onSpinWait();
             }
+
             // Update synthesis envelope and hardware pulse width
             voice.tick();
             currentTick++;

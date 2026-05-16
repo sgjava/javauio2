@@ -3,9 +3,7 @@
  */
 package com.codeferm.periphery.demo;
 
-import com.codeferm.periphery.NativeLoader;
 import com.codeferm.periphery.device.HcSr04;
-import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine;
@@ -20,17 +18,12 @@ import picocli.CommandLine.Option;
  * </p>
  *
  * @author Steven P. Goldsmith
- * @version 1.0.0
+ * @version 1.1.0
  * @since 1.0.0
  */
 @Slf4j
 @Command(name = "HcSr04Demo", mixinStandardHelpOptions = true, version = "1.0.1-SNAPSHOT")
-public class HcSr04Demo implements Callable<Integer> {
-
-    static {
-        // Load native library for the underlying Periphery FFM calls
-        NativeLoader.load();
-    }
+public final class HcSr04Demo extends AbstractDemo {
 
     @Option(names = {"-td", "--trig-device"}, description = "GPIO chip device path for Trig.", defaultValue = "/dev/gpiochip0")
     private String trigDevice;
@@ -60,6 +53,9 @@ public class HcSr04Demo implements Callable<Integer> {
      */
     @Override
     public Integer call() {
+        // Fix terminal formatting on interrupt via base class
+        addTerminalHook();
+
         log.info("Starting HC-SR04 Demo [Trig: {} Line {}, Echo: {} Line {}]",
                 this.trigDevice, this.trigLine, this.echoDevice, this.echoLine);
         log.info("Runtime: {}s, Interval: {}s, Units: {}",

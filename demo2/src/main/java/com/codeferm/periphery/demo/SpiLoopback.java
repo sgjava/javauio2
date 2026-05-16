@@ -3,10 +3,8 @@
  */
 package com.codeferm.periphery.demo;
 
-import com.codeferm.periphery.NativeLoader;
 import com.codeferm.periphery.device.SpiBus;
 import java.util.Arrays;
-import java.util.concurrent.Callable;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
@@ -26,12 +24,7 @@ import picocli.CommandLine.Option;
 @Slf4j
 @Command(name = "SpiLoopback", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "SPI loopback test (requires MISO to MOSI jumper).")
-public class SpiLoopback implements Callable<Integer> {
-
-    static {
-        // Ensure native periphery library is loaded before bus initialization
-        NativeLoader.load();
-    }
+public class SpiLoopback extends AbstractDemo {
 
     /**
      * SPI device path.
@@ -58,10 +51,12 @@ public class SpiLoopback implements Callable<Integer> {
      * </p>
      *
      * @return Exit code (0 for success, 1 for failure).
+     * @throws Exception On hardware or execution error.
      */
     @Override
-    public Integer call() {
+    public Integer call() throws Exception {
         var exitCode = 0;
+        addTerminalHook();
         // Simple loopback doesn't need much, using 1K buffer
         final var bufferSize = 1024;
 

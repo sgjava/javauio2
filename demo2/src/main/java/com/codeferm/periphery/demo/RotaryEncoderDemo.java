@@ -3,9 +3,7 @@
  */
 package com.codeferm.periphery.demo;
 
-import com.codeferm.periphery.NativeLoader;
 import com.codeferm.periphery.device.RotaryEncoder;
-import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.extern.slf4j.Slf4j;
@@ -26,28 +24,41 @@ import picocli.CommandLine.Option;
  */
 @Slf4j
 @Command(name = "RotaryEncoderDemo", mixinStandardHelpOptions = true, version = "2.1.2")
-public class RotaryEncoderDemo implements Callable<Integer> {
+public class RotaryEncoderDemo extends AbstractDemo {
 
-    static {
-        // Load native library dependencies [2026-02-24]
-        NativeLoader.load();
-    }
-
+    /**
+     * GPIO character chip path.
+     */
     @Option(names = {"-d", "--device"}, description = "GPIO character chip path.", defaultValue = "/dev/gpiochip0")
     private String device;
 
+    /**
+     * GPIO line index for CLK.
+     */
     @Option(names = {"-c", "--clk"}, description = "GPIO line index for CLK.", defaultValue = "22")
     private int clkLine;
 
+    /**
+     * GPIO line index for DT.
+     */
     @Option(names = {"-t", "--dt"}, description = "GPIO line index for DT.", defaultValue = "27")
     private int dtLine;
 
+    /**
+     * GPIO line index for SW.
+     */
     @Option(names = {"-w", "--sw"}, description = "GPIO line index for SW.", defaultValue = "17")
     private int swLine;
 
+    /**
+     * Debounce filtering threshold in ms.
+     */
     @Option(names = {"-b", "--debounce"}, description = "Debounce filtering threshold in ms.", defaultValue = "40")
     private long debounceMs;
 
+    /**
+     * Total duration context runtime in seconds.
+     */
     @Option(names = {"-s", "--seconds"}, description = "Total duration context runtime in seconds.", defaultValue = "45")
     private int durationSeconds;
 
@@ -55,9 +66,11 @@ public class RotaryEncoderDemo implements Callable<Integer> {
      * Coordinates the application execution lifecycle.
      *
      * @return 0 on successful processing, 1 on application failure.
+     * @throws Exception On hardware or execution error.
      */
     @Override
-    public Integer call() {
+    public Integer call() throws Exception {
+        addTerminalHook();
         log.info("Starting Edge Interrupt Rotary Demo [CLK: {}, DT: {}, SW: {}]", this.clkLine, this.dtLine, this.swLine);
 
         final var position = new AtomicInteger(0);

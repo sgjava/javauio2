@@ -5,7 +5,6 @@ package com.codeferm.periphery.demo;
 
 import com.codeferm.periphery.device.I2cBus;
 import com.codeferm.periphery.device.Mpu6050;
-import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine;
@@ -26,7 +25,7 @@ import picocli.CommandLine.Option;
 @Slf4j
 @Command(name = "Mpu6050Demo", mixinStandardHelpOptions = true, version = "2.0.0",
         description = "Six-Axis (Gyro + Accelerometer) MEMS MotionTracking demo using FFM")
-public class Mpu6050Demo implements Callable<Integer> {
+public class Mpu6050Demo extends AbstractDemo {
 
     /**
      * I2C device path.
@@ -86,11 +85,12 @@ public class Mpu6050Demo implements Callable<Integer> {
      * Execution logic for the demo.
      *
      * @return Exit code.
-     * @throws InterruptedException If the sleep is interrupted.
+     * @throws Exception On hardware or execution error.
      */
     @Override
-    public Integer call() throws InterruptedException {
+    public Integer call() throws Exception {
         var exitCode = 0;
+        addTerminalHook();
         log.info("Starting MPU6050 demo on {} at 0x{}", device, Integer.toHexString(address));
 
         // Use I2cBus with a 16-byte buffer (sufficient for MPU6050 bursts)
@@ -123,12 +123,12 @@ public class Mpu6050Demo implements Callable<Integer> {
                         angleToString(data.gyroAngleY()),
                         angleToString(data.gyroAngleZ())));
 
-                log.info("Angular Speeds:       {}", xyzValuesToString(
+                log.info("Angular Speeds:        {}", xyzValuesToString(
                         angularSpeedToString(data.gyroSpeedX()),
                         angularSpeedToString(data.gyroSpeedY()),
                         angularSpeedToString(data.gyroSpeedZ())));
 
-                log.info("Filtered Angles:      {}", xyzValuesToString(
+                log.info("Filtered Angles:       {}", xyzValuesToString(
                         angleToString(data.filteredX()),
                         angleToString(data.filteredY()),
                         angleToString(data.filteredZ())));

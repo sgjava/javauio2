@@ -3,10 +3,8 @@
  */
 package com.codeferm.periphery.demo;
 
-import com.codeferm.periphery.NativeLoader;
 import com.codeferm.periphery.device.SpiBus;
 import java.util.Random;
-import java.util.concurrent.Callable;
 import java.util.zip.CRC32;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine;
@@ -28,12 +26,7 @@ import picocli.CommandLine.Option;
 @Slf4j
 @Command(name = "SpiStressTest", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "Probe SPI buffer size and perform CRC32 stress test.")
-public class SpiStress implements Callable<Integer> {
-
-    static {
-        // Ensure native periphery library is loaded before bus initialization
-        NativeLoader.load();
-    }
+public class SpiStress extends AbstractDemo {
 
     /**
      * SPI device path.
@@ -93,10 +86,12 @@ public class SpiStress implements Callable<Integer> {
      * Executes the SPI stress test and validates data using CRC32.
      *
      * @return Exit code (0 for success, 1 for failure).
+     * @throws Exception On hardware or execution error.
      */
     @Override
-    public Integer call() {
+    public Integer call() throws Exception {
         var exitCode = 0;
+        addTerminalHook();
         final var random = new Random();
         final var txCrc = new CRC32();
         final var rxCrc = new CRC32();
@@ -130,6 +125,7 @@ public class SpiStress implements Callable<Integer> {
                 if (i % 20 == 0) {
                     System.out.printf("\rProgress: %.1f%% (%d/%d chunks)",
                             (i * 100.0 / iterations), i, iterations);
+                    System.out.flush();
                 }
             }
 

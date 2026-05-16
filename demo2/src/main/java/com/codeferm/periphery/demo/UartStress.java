@@ -3,10 +3,8 @@
  */
 package com.codeferm.periphery.demo;
 
-import com.codeferm.periphery.NativeLoader;
 import com.codeferm.periphery.device.Uart;
 import java.util.Arrays;
-import java.util.concurrent.Callable;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
@@ -26,21 +24,29 @@ import picocli.CommandLine.Option;
 @Slf4j
 @Command(name = "UartStressTest", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "UART throughput and integrity stress test.")
-public class UartStress implements Callable<Integer> {
+public class UartStress extends AbstractDemo {
 
-    static {
-        NativeLoader.load();
-    }
-
+    /**
+     * Serial device path.
+     */
     @Option(names = {"-d", "--device"}, description = "Serial device path.", defaultValue = "/dev/ttyS2")
     private String device;
 
-    @Option(names = {"-b", "--baud"}, description = "Baud rate (e.g. 115200, 921600, 1500000).", defaultValue = "115200")
+    /**
+     * Baud rate (e.g. 115200, 921600, 1500000).
+     */
+    @Option(names = {"-b", "--baud"}, description = "Baud rate.", defaultValue = "115200")
     private int baud;
 
+    /**
+     * Number of test iterations.
+     */
     @Option(names = {"-i", "--iterations"}, description = "Number of test iterations.", defaultValue = "100")
     private int iterations;
 
+    /**
+     * Chunk size per write (bytes).
+     */
     @Option(names = {"-s", "--size"}, description = "Chunk size per write (bytes).", defaultValue = "1024")
     private int chunkSize;
 
@@ -48,10 +54,13 @@ public class UartStress implements Callable<Integer> {
      * Executes the stress test loop.
      *
      * @return 0 for success, 1 if data corruption or timeout occurs.
+     * @throws Exception On hardware or execution error.
      */
     @Override
-    public Integer call() {
+    public Integer call() throws Exception {
         var exitCode = 0;
+        addTerminalHook();
+
         final var tx = new byte[chunkSize];
         final var rx = new byte[chunkSize];
 
@@ -64,16 +73,11 @@ public class UartStress implements Callable<Integer> {
         log.info("Configuration: {} iterations, {} byte chunks", iterations, chunkSize);
 
         try (final var uart = new Uart(device, baud, chunkSize)) {
-            // JVM Shutdown hook for clean terminal exit
-            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                System.out.println("\n[!] Test interrupted. Cleaning up...");
-            }));
-
             uart.flush();
             final var startTime = System.nanoTime();
-            long totalBytes = 0;
+            var totalBytes = 0L;
 
-            for (int i = 0; i < iterations; i++) {
+            for (var i = 0; i < iterations; i++) {
                 final var written = uart.write(tx);
                 if (written != chunkSize) {
                     log.error("Short write at iteration {}: {} bytes", i, written);
@@ -99,17 +103,21 @@ public class UartStress implements Callable<Integer> {
                 System.out.printf("\rProgress: %d/%d | Total: %d bytes | Throughput: %.2f KB/s",
                         i + 1, iterations, totalBytes,
                         (totalBytes / 1024.0) / ((System.nanoTime() - startTime) / 1_000_000_000.0));
+                System.out.flush();
             }
 
             final var totalTime = (System.nanoTime() - startTime) / 1_000_000_000.0;
             System.out.println(); // Final newline
+
             log.info("Test Complete!");
-            log.info("Duration: {} seconds", String.format("%.2f", totalTime));
-            // Throughput in Mbps makes more sense for a stress test
+            log.info("Duration: {} seconds", "%.2f".formatted(totalTime));
+
+            // Throughput in bps and Mbps
             final var bps = (totalBytes * 8.0) / totalTime;
             log.info("Final Avg Throughput: {} bps ({})",
-                    String.format("%.2f", bps),
-                    String.format("%.2f Mbps", bps / 1_000_000.0));
+                    "%.2f".formatted(bps),
+                    "%.2f Mbps".formatted(bps / 1_000_000.0));
+
         } catch (final Exception e) {
             log.error("Stress test failed: {}", e.getMessage());
             exitCode = 1;
@@ -118,6 +126,11 @@ public class UartStress implements Callable<Integer> {
         return exitCode;
     }
 
+    /**
+     * Main entry point for the UART stress test.
+     *
+     * * @param args Command line arguments.
+     */
     public static void main(final String... args) {
         System.exit(new CommandLine(new UartStress()).execute(args));
     }

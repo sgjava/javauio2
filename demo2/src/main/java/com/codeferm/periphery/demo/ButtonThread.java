@@ -3,9 +3,7 @@
  */
 package com.codeferm.periphery.demo;
 
-import com.codeferm.periphery.NativeLoader;
 import com.codeferm.periphery.device.BlockingButton;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -13,7 +11,6 @@ import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
-
 
 /**
  * Concurrent blocking event demo using FFM-based {@link BlockingButton}.
@@ -29,12 +26,7 @@ import picocli.CommandLine.Option;
 @Slf4j
 @Command(name = "ButtonThread", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "Uses FFM edge detection to wait for button press while other processing occurs.")
-public class ButtonThread implements Callable<Integer> {
-
-    static {
-        // Load the native library for underlying FFM hardware access
-        NativeLoader.load();
-    }
+public final class ButtonThread extends AbstractDemo {
 
     /**
      * GPIO device path.
@@ -78,7 +70,6 @@ public class ButtonThread implements Callable<Integer> {
                     final var edgeStr = BlockingButton.edgeToString(event.edge());
                     final var timestampStr = BlockingButton.formatTimestamp(event.timestamp());
 
-                    // Corrected SLF4J formatting
                     log.info("Button Event: {} at timestamp {}", edgeStr, timestampStr);
                 }
                 log.info("Background thread exiting due to inactivity timeout.");
@@ -97,6 +88,9 @@ public class ButtonThread implements Callable<Integer> {
     public Integer call() {
         var exitCode = 0;
         final var executor = Executors.newSingleThreadExecutor();
+
+        // Add shutdown hook to fix terminal on Ctrl+C via base class
+        addTerminalHook();
 
         try {
             executeWaitForEdge(executor);
@@ -139,7 +133,6 @@ public class ButtonThread implements Callable<Integer> {
      * @param args Command line arguments.
      */
     public static void main(final String... args) {
-        final var cmd = new CommandLine(new ButtonThread());
-        System.exit(cmd.execute(args));
+        System.exit(new CommandLine(new ButtonThread()).execute(args));
     }
 }
