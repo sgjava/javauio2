@@ -20,15 +20,15 @@ import org.periphery.spi_handle;
  * <p>
  * This driver provides a high-performance interface to the SSD1331 controller, utilizing {@link MemorySegment} for zero-copy data
  * transfers and supporting all Hardware Graphic Acceleration Commands (GAC). Optimized with a zero-allocation strategy to prevent
- * memory thrashing and OutOfMemoryErrors in tight loops.
+ * memory thrashing and OutOfMemoryErrors in tight loops. It inherits automated safe-teardown from {@link AbstractDevice}.
  * </p>
  *
  * @author Steven P. Goldsmith
- * @version 1.0.0
+ * @version 1.1.0
  * @since 1.0.0
  */
 @Slf4j
-public class Ssd1331 implements AutoCloseable {
+public class Ssd1331 extends AbstractDevice {
 
     /**
      * libperiphery constant for output direction (1 = GPIO_DIR_OUT).
@@ -176,17 +176,6 @@ public class Ssd1331 implements AutoCloseable {
     public static final byte ACTIVATE_SCROLLING = (byte) 0x2F;
 
     /**
-     * Shared arena for native memory segment management.
-     */
-    @Getter
-    private final Arena arena;
-
-    /**
-     * Native handle for the SPI bus.
-     */
-    private final MemorySegment spiHandle;
-
-    /**
      * Native handle for the Data/Command GPIO pin.
      */
     private final MemorySegment dcHandle;
@@ -230,20 +219,21 @@ public class Ssd1331 implements AutoCloseable {
      */
     public Ssd1331(final String device, final int mode, final int speed,
             final String gpioDevice, final int dcPin, final int resPin) {
-        this.arena = Arena.ofShared();
-        this.spiHandle = arena.allocate(spi_handle.layout());
-        this.dcHandle = arena.allocate(gpio_handle.layout());
-        this.resHandle = arena.allocate(gpio_handle.layout());
+        // Registers with HardwareRegistry and maps primary spi_handle structure
+        super(spi_handle.layout());
+
+        this.dcHandle = getArena().allocate(gpio_handle.layout());
+        this.resHandle = getArena().allocate(gpio_handle.layout());
 
         // Pre-allocate command buffer (64 bytes is plenty for any GAC command)
-        this.commandSegment = arena.allocate(64);
+        this.commandSegment = getArena().allocate(64);
         // Pre-allocate image buffer (width * height * 2 bytes for RGB565)
-        this.imageSegment = arena.allocate(width * height * 2);
+        this.imageSegment = getArena().allocate(width * height * 2);
 
-        final MemorySegment cDevice = arena.allocateFrom(device);
-        final MemorySegment cGpioDev = arena.allocateFrom(gpioDevice);
+        final MemorySegment cDevice = getArena().allocateFrom(device);
+        final MemorySegment cGpioDev = getArena().allocateFrom(gpioDevice);
 
-        if (Periphery.spi_open(spiHandle, cDevice, mode, speed) < 0) {
+        if (Periphery.spi_open(getHandle(), cDevice, mode, speed) < 0) {
             throw new RuntimeException("SPI open failed");
         }
         if (Periphery.gpio_open(dcHandle, cGpioDev, dcPin, GPIO_DIR_OUT) < 0) {
@@ -261,11 +251,13 @@ public class Ssd1331 implements AutoCloseable {
      * @param data Command array.
      */
     public final void writeCommand(final byte[] data) {
-        Periphery.gpio_write(dcHandle, false);
-        // Copy heap data to pre-allocated native memory
-        MemorySegment.copy(data, 0, commandSegment, ValueLayout.JAVA_BYTE, 0, data.length);
-        if (Periphery.spi_transfer(spiHandle, commandSegment, commandSegment, data.length) < 0) {
-            throw new RuntimeException("SPI Command failed");
+        if (getHandle().address() != 0 && getArena().scope().isAlive()) {
+            Periphery.gpio_write(dcHandle, false);
+            // Copy heap data to pre-allocated native memory
+            MemorySegment.copy(data, 0, commandSegment, ValueLayout.JAVA_BYTE, 0, data.length);
+            if (Periphery.spi_transfer(getHandle(), commandSegment, commandSegment, data.length) < 0) {
+                throw new RuntimeException("SPI Command failed");
+            }
         }
     }
 
@@ -275,9 +267,11 @@ public class Ssd1331 implements AutoCloseable {
      * @param segment Native segment containing pixel data.
      */
     public final void writeData(final MemorySegment segment) {
-        Periphery.gpio_write(dcHandle, true);
-        if (Periphery.spi_transfer(spiHandle, segment, segment, segment.byteSize()) < 0) {
-            throw new RuntimeException("SPI Data Segment transfer failed");
+        if (getHandle().address() != 0 && getArena().scope().isAlive()) {
+            Periphery.gpio_write(dcHandle, true);
+            if (Periphery.spi_transfer(getHandle(), segment, segment, segment.byteSize()) < 0) {
+                throw new RuntimeException("SPI Data Segment transfer failed");
+            }
         }
     }
 
@@ -288,7 +282,7 @@ public class Ssd1331 implements AutoCloseable {
      * @param data Pixel data array.
      */
     public final void writeData(final byte[] data) {
-        final MemorySegment cData = arena.allocateFrom(ValueLayout.JAVA_BYTE, data);
+        final MemorySegment cData = getArena().allocateFrom(ValueLayout.JAVA_BYTE, data);
         writeData(cData);
     }
 
@@ -433,19 +427,29 @@ public class Ssd1331 implements AutoCloseable {
     }
 
     /**
-     * Safely closes native resources.
+     * Template implementation called by AbstractDevice. Blanks the display completely and turns off the power gate before closing
+     * the native bindings.
      */
     @Override
-    public final void close() {
+    protected void closeNative() {
+        log.debug("Closing SSD1331 OLED Display");
         try {
-            writeCommand(new byte[]{DISPLAY_OFF});
+            if (getHandle().address() != 0 && getArena().scope().isAlive()) {
+                // Clear active frame structures and cut power to the panel hardware
+                writeCommand(new byte[]{DISPLAY_OFF});
+            }
         } catch (final Exception e) {
-            log.error("Error turning off display during close: {}", e.getMessage());
+            System.err.printf("Error turning off display during emergency close: %s%n", e.getMessage());
         } finally {
-            Periphery.spi_close(spiHandle);
-            Periphery.gpio_close(dcHandle);
-            Periphery.gpio_close(resHandle);
-            arena.close();
+            if (getHandle().address() != 0) {
+                Periphery.spi_close(getHandle());
+            }
+            if (dcHandle.address() != 0) {
+                Periphery.gpio_close(dcHandle);
+            }
+            if (resHandle.address() != 0) {
+                Periphery.gpio_close(resHandle);
+            }
         }
     }
 }
