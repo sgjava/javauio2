@@ -13,6 +13,7 @@ import static com.codeferm.u8g2.U8g2Factory.Transport.SPISW;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.concurrent.Callable;
+import java.util.concurrent.TimeUnit;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.u8g2.U8g2;
@@ -20,9 +21,13 @@ import picocli.CommandLine;
 
 /**
  * Base CLI gives you a fully configured display with default font.
+ * <p>
+ * Orchestrates the Project Panama FFM hardware lifecycle using shared arenas to allow thread-safe hardware teardown routines during
+ * unexpected shutdowns.
+ * </p>
  *
  * @author Steven P. Goldsmith
- * @version 1.0.0
+ * @version 1.1.0
  * @since 1.0.0
  */
 @Data
@@ -35,98 +40,117 @@ public abstract class Base implements Callable<Integer> {
     @CommandLine.Option(names = {"--setup"}, description
             = "Setup function to call, ${DEFAULT-VALUE} by default.")
     private String setup = "sdl_128x64_1";
+
     /**
      * Rotation of the display.
      */
     @CommandLine.Option(names = {"--rotation"}, description
             = "Rotation 0, 90, 180, 270 degrees, ${DEFAULT-VALUE} by default.")
     private int rotation = 0;
+
     /**
      * Font to use.
      */
     @CommandLine.Option(names = {"--font"}, description
             = "Font, ${DEFAULT-VALUE} by default.")
     private String font = "courB10_tf";
+
     /**
      * Type allows hardware and software I2C and SPI plus SDL.
      */
     @CommandLine.Option(names = {"--type"}, description = "Type of display, ${DEFAULT-VALUE} by default.")
     private U8g2Factory.Transport type = SDL;
+
     /**
      * GPIO chip number.
      */
     @CommandLine.Option(names = {"--gpio"}, description = "GPIO chip number, ${DEFAULT-VALUE} by default.")
     private int gpio = 0x0;
+
     /**
      * I2C or SPI bus number.
      */
     @CommandLine.Option(names = {"--bus"}, description = "I2C or SPI bus number, ${DEFAULT-VALUE} by default.")
     private int bus = 0x0;
+
     /**
      * I2C address.
      */
     @CommandLine.Option(names = {"--address"}, description = "I2C address, ${DEFAULT-VALUE} by default.")
     private int address = 0x3c;
+
     /**
      * I2C SCL.
      */
     @CommandLine.Option(names = {"--scl"}, description = "I2C software SCL pin, ${DEFAULT-VALUE} by default.")
     private int scl = 11;
+
     /**
      * I2C SDA.
      */
     @CommandLine.Option(names = {"--sda"}, description = "I2C software SDA pin, ${DEFAULT-VALUE} by default.")
     private int sda = 12;
+
     /**
      * DC pin for SPI.
      */
     @CommandLine.Option(names = {"--dc"}, description = "SPI DC pin, ${DEFAULT-VALUE} by default.")
     private int dc = 199;
+
     /**
      * RESET pin for SPI.
      */
     @CommandLine.Option(names = {"--reset"}, description = "I2C/SPI RESET pin, ${DEFAULT-VALUE} by default.")
     private int reset = 198;
+
     /**
      * MOSI pin for SPI.
      */
     @CommandLine.Option(names = {"--mosi"}, description = "SPI MOSI pin, ${DEFAULT-VALUE} by default.")
     private int mosi = 15;
+
     /**
      * SCK pin for SPI.
      */
     @CommandLine.Option(names = {"--sck"}, description = "SPI SCK pin, ${DEFAULT-VALUE} by default.")
     private int sck = 14;
+
     /**
      * CS pin for SPI.
      */
     @CommandLine.Option(names = {"--cs"}, description = "SPI CS pin, ${DEFAULT-VALUE} by default.")
     private int cs = 13;
+
     /**
      * Mode for SPI.
      */
     @CommandLine.Option(names = {"--mode"}, description = "SPI mode, ${DEFAULT-VALUE} by default.")
     private short mode = 0;
+
     /**
      * SPI maximum speed.
      */
     @CommandLine.Option(names = {"--speed"}, description = "SPI maximum speed, ${DEFAULT-VALUE} by default.")
     private int speed = 500000;
+
     /**
      * Nanosecond delay or 0 for none for software I2C and SPI.
      */
     @CommandLine.Option(names = {"--delay"}, description = "Nanosecond delay for software I2C and SPI, ${DEFAULT-VALUE} by default.")
     private long delay = 0;
+
     /**
      * Milliseconds to sleep for text and graphics.
      */
     @CommandLine.Option(names = {"--sleep"}, description
             = " Milliseconds to sleep for text and graphics, ${DEFAULT-VALUE} by default.")
     private long sleep = 5000;
+
     /**
      * Display width.
      */
     private int width;
+
     /**
      * Display height.
      */
@@ -141,10 +165,9 @@ public abstract class Base implements Callable<Integer> {
 
     /**
      * Show text with delay. Everything is calculated each time as font can differ between calls. String is wrapped if too long for
-     * one line. This method uses a local confined arena to ensure all temporary C-strings used for wrapping and drawing are
-     * deallocated immediately after the buffer is sent.
+     * one line.
      *
-     * @param u8g2 MemorySegment handle to the u8g2 struct (allocated in Base arena).
+     * @param u8g2 MemorySegment handle to the u8g2 struct.
      * @param text Text to show.
      */
     public void showText(final MemorySegment u8g2, final String text) {
@@ -156,34 +179,28 @@ public abstract class Base implements Callable<Integer> {
             var currentLine = new StringBuilder();
             var y = maxHeight;
             for (final String word : words) {
-                // Check if adding this word (plus a space) exceeds width
                 final String testLine = currentLine.length() == 0 ? word : currentLine + " " + word;
-                // Allocate temporary string for width measurement
                 final MemorySegment testSegment = localArena.allocateFrom(testLine);
                 if (U8g2.u8g2_GetStrWidth(u8g2, testSegment) < width) {
-                    // Word fits, update the current line
                     currentLine = new StringBuilder(testLine);
                 } else {
-                    // Word doesn't fit, draw the current line and start a new one
                     if (currentLine.length() > 0) {
                         U8g2.u8g2_DrawStr(u8g2, (short) 1, (short) y, localArena.allocateFrom(currentLine.toString()));
                         y += maxHeight;
                     }
-                    // If we've run out of vertical space, stop
                     if (y > height) {
                         break;
                     }
                     currentLine = new StringBuilder(word);
                 }
             }
-            // Draw the very last line if there's room
             if (currentLine.length() > 0 && y <= height) {
                 U8g2.u8g2_DrawStr(u8g2, (short) 1, (short) y, localArena.allocateFrom(currentLine.toString()));
             }
             U8g2.u8g2_SendBuffer(u8g2);
 
             try {
-                Thread.sleep(sleep);
+                TimeUnit.MILLISECONDS.sleep(sleep);
             } catch (final InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
@@ -192,6 +209,10 @@ public abstract class Base implements Callable<Integer> {
 
     /**
      * Sub class should call this to setup display.
+     * <p>
+     * Leverages a shared memory arena instead of a confined context to guarantee cross-thread permission accessibility for
+     * unmanaged platform resources on application termination events.
+     * </p>
      *
      * @return Exit code.
      * @throws InterruptedException Possible exception.
@@ -199,18 +220,20 @@ public abstract class Base implements Callable<Integer> {
     @Override
     public Integer call() throws InterruptedException {
         NativeLoader.load();
-        var exitCode = 0;
-        log.atDebug().log(String.format("Setup %s", setup));
-        log.atDebug().log(String.format("Rotation %d", rotation));
-        log.atDebug().log(String.format("Type %s", type));
-        log.atDebug().log(String.format("Font %s", font));
-        // Confined arena manages the lifecycle of the u8g2 struct and all drawing strings, etc.
-        try (final var arena = Arena.ofConfined()) {
+        final var exitCode = 0;
+        log.atDebug().log("Setup {}", setup);
+        log.atDebug().log("Rotation {}", rotation);
+        log.atDebug().log("Type {}", type);
+        log.atDebug().log("Font {}", font);
+
+        // Critical Fix: Initialize via Shared Arena to ensure thread cross-boundaries stay legal for SIGINT hook
+        final var arena = Arena.ofShared();
+        try {
             // Allocate the u8g2 structure based on the jextract layout
             final var u8g2 = arena.allocate(org.u8g2.u8g2_struct.layout());
 
             // Register an emergency JVM hook mapped directly to this execution scope's precise allocations
-            final var emergencyHook = new Thread(() -> executeTeardown(u8g2, arena.scope()));
+            final var emergencyHook = new Thread(() -> executeTeardown(u8g2, arena));
             Runtime.getRuntime().addShutdownHook(emergencyHook);
 
             try {
@@ -226,7 +249,7 @@ public abstract class Base implements Callable<Integer> {
                     case SDL ->
                         U8g2Factory.initSdl(u8g2, setup, rotation);
                     default ->
-                        throw new RuntimeException(String.format("%s is not a valid type", type));
+                        throw new RuntimeException("%s is not a valid type".formatted(type));
                 }
                 width = U8g2.u8g2_GetDisplayWidth_Java(u8g2);
                 height = U8g2.u8g2_GetDisplayHeight_Java(u8g2);
@@ -239,14 +262,17 @@ public abstract class Base implements Callable<Integer> {
                 run(u8g2);
 
             } finally {
-                // Remove the shutdown thread when exiting normally to avoid memory leaks
                 try {
                     Runtime.getRuntime().removeShutdownHook(emergencyHook);
                 } catch (final IllegalStateException e) {
                     // Failing to remove when the JVM is already shutting down is standard
                 }
-                // Perform the final processing pass directly on the structured memory state
-                executeTeardown(u8g2, arena.scope());
+                executeTeardown(u8g2, arena);
+            }
+        } finally {
+            // Clean up the parent shared arena scope boundary on clean programmatic exits
+            if (arena.scope().isAlive()) {
+                arena.close();
             }
         }
         return exitCode;
@@ -257,10 +283,10 @@ public abstract class Base implements Callable<Integer> {
      * runtime interruptions.
      *
      * @param u8g2 The display memory context reference.
-     * @param scope The active segment lifecycle visibility tracking flag.
+     * @param arena The parent unmanaged memory allocator context.
      */
-    private void executeTeardown(final MemorySegment u8g2, final MemorySegment.Scope scope) {
-        if (scope.isAlive() && u8g2 != null && u8g2.address() != 0) {
+    private void executeTeardown(final MemorySegment u8g2, final Arena arena) {
+        if (arena.scope().isAlive() && u8g2 != null && u8g2.address() != 0) {
             log.atDebug().log("Executing hardware clean up and display power sequence...");
             try {
                 U8g2.u8g2_ClearBuffer(u8g2);
@@ -273,6 +299,9 @@ public abstract class Base implements Callable<Integer> {
                     }
                     case SPIHW, SPISW -> {
                         U8g2.done_spi.makeInvoker().handle().invokeExact();
+                    }
+                    default -> {
+                        // SDL simulator requires no additional low-level kernel close mapping out calls
                     }
                 }
             } catch (final Throwable t) {
