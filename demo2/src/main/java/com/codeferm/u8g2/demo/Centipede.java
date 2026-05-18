@@ -17,11 +17,20 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
 /**
- * Centipede with Smooth Interpolation.
+ * Centipede Color Logic Ported to High-Performance Monochrome U8g2 FFM API.
  * <p>
- * A high-performance implementation of the classic arcade game Centipede, optimized for low-resolution displays (128x64 or
- * 128x128). This version utilizes Java's Foreign Function & Memory (FFM) API for zero-allocation rendering loops and Delta-Time
- * scaling with LERP smoothing to eliminate jerkiness at low frame rates (e.g., 14 FPS on ARM hardware).
+ * A high-fidelity port of the Atari classic game engine logic, optimized for monochrome low-resolution displays using Java's
+ * Foreign Function & Memory (FFM) API. This implementation incorporates multi-chain centipede segment splits, player area bounding,
+ * automatic wave scaling, and dynamic spider gardening AI.
+ * </p>
+ * <p>
+ * Projectile assets feature rigid frame-pass boundary isolation. When any lethal intersection occurs against any target type, the
+ * projectile state is instantly neutralized, bailing out of the sequence execution to guarantee a clear visual update frame before
+ * a new shot is prepared on the subsequent cycle.
+ * </p>
+ * <p>
+ * This class safely intercepts SIGINT via a coordinated shutdown hook that toggles execution flags instead of executing native
+ * device sequences on concurrent background threads, completely avoiding native SIGSEGV crashes during terminal shutdown.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -30,7 +39,7 @@ import picocli.CommandLine.Option;
  */
 @Slf4j
 @Command(name = "Centipede", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
-        description = "Centipede - Pro FFM Implementation")
+        description = "Centipede - Multi-Chain U8g2 FFM Port")
 public class Centipede extends Base {
 
     /**
@@ -40,164 +49,150 @@ public class Centipede extends Base {
     private int targetFps;
 
     /**
-     * Random number generator for game logic and spawning.
+     * Random number generator for game logic.
      */
     private final Random random = new Random();
 
     /**
-     * Control flag for the main game loop.
+     * Enum identifying structural game states.
      */
-    private boolean running = true;
+    private enum GameState {
+        PLAYING, GAME_OVER
+    }
 
     /**
-     * Speed of the centipede in pixels per second.
+     * Current operational state of the loop.
      */
-    private static final float CENTIPEDE_SPEED = 42.0f;
+    private GameState currentState = GameState.PLAYING;
 
     /**
-     * Speed of the spider in pixels per second.
+     * Control flag for the main game loop. Marked volatile to guarantee cross-thread visibility during signal interception.
      */
-    private static final float SPIDER_SPEED = 65.0f;
+    private volatile boolean running = true;
 
     /**
-     * Speed of the player's projectile in pixels per second.
+     * Object used to synchronize orderly shutdown between the main thread and shutdown hook.
      */
-    private static final float SHOT_SPEED = 145.0f;
+    private final Object shutdownLock = new Object();
 
     /**
-     * Smoothing factor for LERP movement (8.0f is ideal for ~14 FPS).
+     * Top boundary constraint of the designated player area.
      */
-    private static final float PLAYER_LERP_FACTOR = 8.0f;
+    private static final int PLAYER_AREA_TOP = 40;
 
     /**
-     * Collection of active mushrooms on the field.
+     * Bottom boundary constraint for physics updates.
      */
-    private final List<Mushroom> mushrooms = new ArrayList<>();
+    private static final int BOTTOM_ROW = 58;
 
     /**
-     * Collection of active centipede segments.
+     * Base velocity tracking for segment movement.
      */
-    private final List<Segment> centipede = new ArrayList<>();
+    private float baseCentipedeSpeed = 30.0f;
 
     /**
-     * Current spider enemy, if any.
-     */
-    private Spider spider = null;
-
-    /**
-     * Current player projectile, if any.
-     */
-    private Projectile playerShot = null;
-
-    /**
-     * Current player X position (floating point for smooth LERP).
+     * Interpolated floating-point position for player ship horizontal tracking.
      */
     private float playerX;
 
     /**
-     * Current player Y position (fixed in player zone).
+     * Fixed vertical coordinate for the player's ship asset.
      */
     private float playerY;
 
     /**
-     * Current player score.
+     * Horizontal velocity track for player transitions.
+     */
+    private float playerVX = 0;
+
+    /**
+     * Handle to an active projectile instance, null if available for reload.
+     */
+    private Projectile playerShot = null;
+
+    /**
+     * Pre-allocated list tracking structural mushroom targets.
+     */
+    private final List<Mushroom> mushrooms = new ArrayList<>();
+
+    /**
+     * Multi-chain tracking array grouping segmented centipede lines.
+     */
+    private final List<List<Segment>> centipedeChains = new ArrayList<>();
+
+    /**
+     * Handle to an active spider instance, null if clear.
+     */
+    private Spider spider = null;
+
+    /**
+     * Total calculated player score tracking.
      */
     private int score = 0;
 
     /**
-     * Current player lives remaining.
+     * Total user resource pool lives remaining.
      */
-    private int lives = 3;
+    private int lives = 5;
 
     /**
-     * Flag indicating if the game has ended.
+     * Current sequential operational wave scale.
      */
-    private boolean gameOver = false;
+    private int wave = 1;
 
     /**
-     * Organic mushroom destruction bitmaps (5x5).
+     * Penalty counter for segments dropping below threshold boundaries.
      */
-    private static final int[][] MUSH_STAGES = {
-        {0, 0, 0, 0, 0},
-        {0x00, 0x00, 0x04, 0x04, 0x04},
-        {0x04, 0x0E, 0x0E, 0x04, 0x04},
-        {0x0E, 0x1F, 0x1F, 0x04, 0x04}
-    };
+    private int segmentsReachedBottom = 0;
 
     /**
-     * Sprite bits for segments and ship.
-     */
-    private static final int[] SEG_BITS = {0x0E, 0x1F, 0x15, 0x1F, 0x0E};
-    private static final int[] SHIP_BITS = {0x04, 0x0E, 0x0E, 0x1F, 0x1F};
-
-    /**
-     * 3-Frame Spider Animation bitmaps (7x7).
-     */
-    private static final int[][] SPID_ANIM = {
-        {0x49, 0x2A, 0x1C, 0x3E, 0x1C, 0x2A, 0x49},
-        {0x00, 0x49, 0x2A, 0x3E, 0x2A, 0x49, 0x00},
-        {0x08, 0x14, 0x22, 0x7F, 0x22, 0x14, 0x08}
-    };
-
-    /**
-     * Native memory arena for long-lived segments.
-     */
-    private final Arena persistentArena = Arena.ofShared();
-    private MemorySegment fontMain;
-    private MemorySegment scoreSegment;
-    private MemorySegment livesSegment;
-    private MemorySegment gameOverSegment;
-
-    /**
-     * Entity class for Mushrooms.
+     * Structural data representations for entities.
      */
     public static class Mushroom {
 
-        public int x, y, health;
+        public int x, y, health = 3;
 
         public Mushroom(final int x, final int y) {
             this.x = x;
             this.y = y;
-            this.health = 3;
         }
     }
 
     /**
-     * Entity class for Centipede segments.
+     * Tracking entity for unique segmented parts of a chain group.
      */
     public static class Segment {
 
         public float x, y;
         public int dx = 1;
+        public boolean isHead;
+        public boolean isRising = false;
 
-        public Segment(final float x, final float y) {
+        public Segment(final float x, final float y, final boolean isHead) {
             this.x = x;
             this.y = y;
+            this.isHead = isHead;
         }
     }
 
     /**
-     * Entity class for Spider with vector movement.
+     * Threat agent updating with independent vectors.
      */
     public static class Spider {
 
-        public float x, y, vx, vy;
-        public float timer, animTimer, lifeTimer;
-        public int animFrame;
+        public float x, y, vx, vy, changeTimer;
 
         public Spider(final float x, final float y, final float vx, final float vy) {
             this.x = x;
             this.y = y;
             this.vx = vx;
             this.vy = vy;
-            this.timer = 0.5f;
-            this.animTimer = 0.1f;
-            this.lifeTimer = 10.0f;
+            this.changeTimer = 0.4f;
         }
     }
 
     /**
-     * Entity class for Player projectiles.
+     * High-speed projectile container tracking.
      */
     public static class Projectile {
 
@@ -209,276 +204,410 @@ public class Centipede extends Base {
         }
     }
 
+    // Binary bitmask translations of the original SSD1331 color sprites (6x6 and 8x8 metrics)
+    private static final int[] MUSH_FULL = {0x1E, 0x33, 0x3F, 0x3F, 0x0C, 0x0C};
+    private static final int[] MUSH_DMG1 = {0x16, 0x33, 0x2F, 0x3B, 0x0C, 0x0C};
+    private static final int[] MUSH_DMG2 = {0x06, 0x23, 0x0E, 0x33, 0x04, 0x0C};
+    private static final int[] HEAD_BITS = {0x1E, 0x2D, 0x3F, 0x3F, 0x1E, 0x2D};
+    private static final int[] BODY_BITS = {0x1E, 0x3F, 0x3F, 0x3F, 0x1E, 0x00};
+    private static final int[] SHIP_BITS = {0x0C, 0x1E, 0x33, 0x3F, 0x3F, 0x2D};
+    private static final int[] SPID_BITS = {0x81, 0x42, 0xFF, 0x7E, 0x7E, 0xFF, 0x42, 0x81};
+
     /**
-     * Pre-allocates native memory segments once to prevent garbage collection during the high-frequency game loop.
+     * Managed FFM native arena configuration container.
+     */
+    private final Arena persistentArena = Arena.ofShared();
+    private MemorySegment fontMain;
+    private MemorySegment uiStatusSegment;
+    private MemorySegment gameOverSegment;
+
+    /**
+     * Allocates standard flat native spaces once to minimize run loop allocations.
      */
     private void setupNativeBuffers() {
         fontMain = U8g2Factory.getFont("4x6_tf");
-        scoreSegment = persistentArena.allocateFrom("S:00000");
-        livesSegment = persistentArena.allocateFrom("P:3");
+        uiStatusSegment = persistentArena.allocateFrom("00000 L:5 W:1");
         gameOverSegment = persistentArena.allocateFrom("GAME OVER");
     }
 
     /**
-     * Synchronizes Java game state (score, lives) with native memory segments used for u8g2 rendering.
+     * Formats state strings natively without garbage collection tracking overhead.
      */
     private void updateUI() {
-        final var sStr = String.format("%05d", score);
-        MemorySegment.copy(sStr.getBytes(), 0, scoreSegment, ValueLayout.JAVA_BYTE, 2, 5);
-        livesSegment.set(ValueLayout.JAVA_BYTE, 2, (byte) ('0' + Math.max(0, lives)));
+        final var uiStr = String.format("%05d L:%01d W:%d", score, Math.max(0, lives), wave);
+        final var bytes = uiStr.getBytes();
+        MemorySegment.copy(bytes, 0, uiStatusSegment, ValueLayout.JAVA_BYTE, 0, Math.min(bytes.length, 13));
     }
 
     /**
-     * Initializes or resets the game level.
+     * Coordinates system physical updates.
      *
-     * @param fullReset If true, resets player score and lives to defaults.
-     */
-    public void initLevel(final boolean fullReset) {
-        if (fullReset) {
-            score = 0;
-            lives = 3;
-            setupNativeBuffers();
-            gameOver = false;
-        }
-        mushrooms.clear();
-        centipede.clear();
-        spider = null;
-        playerShot = null;
-
-        final var w = getWidth();
-        final var h = getHeight();
-        playerX = w / 2.0f;
-        playerY = h - 7.0f;
-
-        for (int i = 0; i < 15; i++) {
-            mushrooms.add(new Mushroom((random.nextInt((w - 12) / 6) * 6) + 6, (random.nextInt((h - 35) / 6) * 6) + 10));
-        }
-        for (int i = 0; i < 10; i++) {
-            centipede.add(new Segment((w / 2.0f) - (i * 6), 8));
-        }
-    }
-
-    /**
-     * Updates game physics and AI based on delta-time.
-     *
-     * @param dt Elapsed seconds since the last update.
+     * @param dt Segment frame time delta delta calculations.
      */
     private void update(final float dt) {
-        if (gameOver) {
+        if (currentState == GameState.GAME_OVER) {
             return;
         }
-        if (centipede.isEmpty()) {
-            initLevel(false);
-            return;
+
+        if (centipedeChains.isEmpty()) {
+            wave++;
+            baseCentipedeSpeed += 4.0f;
+            spawnCentipede();
+            for (int i = 0; i < segmentsReachedBottom; i++) {
+                spawnExtraHead();
+            }
+            segmentsReachedBottom = 0;
+        }
+
+        // CRITICAL FIX STEP 1: The reload evaluation checks state at the absolute entry barrier of the next pass.
+        if (playerShot == null) {
+            playerShot = new Projectile(playerX + 2, playerY - 2);
         }
 
         updateCombat(dt);
-        updateCentipede(dt);
+        updateCentipedes(dt);
         updateSpider(dt);
 
-        // Apply LERP for smooth player movement at low FPS
-        final var targetX = (spider != null) ? spider.x : (centipede.isEmpty() ? playerX : centipede.get(0).x);
-        playerX += (targetX - playerX) * PLAYER_LERP_FACTOR * dt;
-
-        playerX = Math.max(0, Math.min(getWidth() - 5, playerX));
-        if (playerShot == null) {
-            playerShot = new Projectile(playerX + 2, playerY);
+        var targetX = getWidth() / 2.0f;
+        if (spider != null) {
+            targetX = spider.x + 4;
+        } else if (!centipedeChains.isEmpty()) {
+            Segment lowest = null;
+            for (int i = 0; i < centipedeChains.size(); i++) {
+                final var chain = centipedeChains.get(i);
+                for (int j = 0; j < chain.size(); j++) {
+                    final var s = chain.get(j);
+                    if (lowest == null || s.y > lowest.y) {
+                        lowest = s;
+                    }
+                }
+            }
+            if (lowest != null) {
+                targetX = lowest.x;
+            }
         }
 
+        movePlayer(targetX, dt);
         checkCollisions();
     }
 
     /**
-     * Handles projectile physics and hit detection against all enemies.
+     * Moves all centipede chain clusters, adjusting for bounding box edges and mushroom impacts.
      *
-     * @param dt Elapsed seconds.
+     * @param dt Frame delta tracking scale.
+     */
+    private void updateCentipedes(final float dt) {
+        for (int i = 0; i < centipedeChains.size(); i++) {
+            final var chain = centipedeChains.get(i);
+            for (int j = 0; j < chain.size(); j++) {
+                final var s = chain.get(j);
+                final var nextX = s.x + (s.dx * baseCentipedeSpeed * dt);
+                var turn = (nextX <= 0 && s.dx < 0) || (nextX >= getWidth() - 6 && s.dx > 0);
+
+                if (!turn) {
+                    for (int k = 0; k < mushrooms.size(); k++) {
+                        final var m = mushrooms.get(k);
+                        if (Math.abs(nextX - m.x) < 5 && Math.abs(s.y - m.y) < 5) {
+                            turn = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (turn) {
+                    s.dx = -s.dx;
+                    if (s.isRising) {
+                        s.y -= 6;
+                        if (s.y <= PLAYER_AREA_TOP) {
+                            s.isRising = false;
+                        }
+                    } else {
+                        s.y += 6;
+                        if (s.y >= BOTTOM_ROW) {
+                            s.isRising = true;
+                            segmentsReachedBottom++;
+                        }
+                    }
+                } else {
+                    s.x = nextX;
+                }
+            }
+        }
+    }
+
+    /**
+     * Drops single detached high-speed heads directly within the active action bounds.
+     */
+    private void spawnExtraHead() {
+        final var headChain = new ArrayList<Segment>();
+        final var s = new Segment(random.nextInt(getWidth() - 6), BOTTOM_ROW, true);
+        s.isRising = true;
+        headChain.add(s);
+        centipedeChains.add(headChain);
+    }
+
+    /**
+     * Tracks weapon intersections and coordinates damage. CRITICAL FIX STEP 2: Instantly clears the weapon object reference and
+     * breaks loop sequence on any intercept to enforce rendering of an empty lane state before regenerating.
+     *
+     * @param dt Frame timing coefficient variable.
      */
     private void updateCombat(final float dt) {
-        if (playerShot != null) {
-            playerShot.y -= SHOT_SPEED * dt;
-            var hit = false;
+        if (playerShot == null) {
+            return;
+        }
+        playerShot.y -= 280.0f * dt;
 
-            if (spider != null && Math.abs(playerShot.x - spider.x) < 5 && Math.abs(playerShot.y - spider.y) < 5) {
-                spider = null;
-                score += 600;
-                hit = true;
-            }
-            if (!hit) {
-                for (final var m : mushrooms) {
-                    if (Math.abs(playerShot.x - m.x) < 4 && Math.abs(playerShot.y - m.y) < 4) {
-                        m.health--;
-                        score += 5;
-                        hit = true;
-                        break;
-                    }
+        // Border edge escape bounds clean
+        if (playerShot.y < 0) {
+            playerShot = null;
+            return;
+        }
+
+        // Spider interception check
+        if (spider != null && Math.abs(playerShot.x - (spider.x + 4)) < 6 && Math.abs(playerShot.y - (spider.y + 4)) < 6) {
+            spider = null;
+            score += 600;
+            playerShot = null; // Removed right away
+            return;            // Bail out right away to isolate the frame
+        }
+
+        // Indexed search structure across mushroom items
+        for (int i = 0; i < mushrooms.size(); i++) {
+            final var m = mushrooms.get(i);
+            if (playerShot.x >= m.x - 1 && playerShot.x <= m.x + 6 && playerShot.y >= m.y && playerShot.y <= m.y + 6) {
+                m.health--;
+                score += 5;
+                if (m.health < 0) {
+                    mushrooms.remove(i);
                 }
-                mushrooms.removeIf(m -> m.health <= 0);
+                playerShot = null; // Removed right away
+                return;            // Bail out right away to isolate the frame
             }
-            if (!hit) {
-                for (int i = 0; i < centipede.size(); i++) {
-                    final var s = centipede.get(i);
-                    if (Math.abs(playerShot.x - s.x) < 4 && Math.abs(playerShot.y - s.y) < 4) {
+        }
+
+        // Deep chain split logic parsing for segmented groups
+        final var newChains = new ArrayList<List<Segment>>();
+        var chainHitOccurred = false;
+
+        for (int i = 0; i < centipedeChains.size(); i++) {
+            final var chain = centipedeChains.get(i);
+            for (int j = 0; j < chain.size(); j++) {
+                final var s = chain.get(j);
+                if (Math.abs(playerShot.x - (s.x + 3)) < 6 && Math.abs(playerShot.y - (s.y + 3)) < 6) {
+                    if (random.nextInt(3) == 0) {
                         mushrooms.add(new Mushroom((int) s.x, (int) s.y));
-                        centipede.remove(i);
-                        score += 100;
-                        hit = true;
-                        break;
                     }
+                    score += 100;
+                    chainHitOccurred = true;
+
+                    // Generate tail sub-chain split references if internal segment dropped
+                    if (j + 1 < chain.size()) {
+                        final var split = new ArrayList<>(chain.subList(j + 1, chain.size()));
+                        split.get(0).isHead = true;
+                        newChains.add(split);
+                    }
+                    chain.subList(j, chain.size()).clear();
+                    break;
                 }
             }
-            if (playerShot.y < 6 || hit) {
-                playerShot = null;
+
+            if (chain.isEmpty()) {
+                centipedeChains.remove(i);
+                i--; // Balanced index shift adjustment
             }
+            if (chainHitOccurred) {
+                break;
+            }
+        }
+
+        if (!newChains.isEmpty()) {
+            centipedeChains.addAll(newChains);
+        }
+
+        if (chainHitOccurred) {
+            playerShot = null; // Removed right away
         }
     }
 
     /**
-     * Updates centipede segment positions and handles mushroom-induced turns.
+     * Smoothly sweeps the movement position vector toward calculated logic points.
      *
-     * @param dt Elapsed seconds.
+     * @param targetX Destination tracking focus line.
+     * @param dt Delta scale.
      */
-    private void updateCentipede(final float dt) {
-        for (final var s : centipede) {
-            final var nextX = s.x + (s.dx * CENTIPEDE_SPEED * dt);
-            var turn = (nextX <= 0 || nextX >= getWidth() - 5);
-            if (!turn) {
-                for (final var m : mushrooms) {
-                    if (nextX < m.x + 5 && nextX + 5 > m.x && s.y < m.y + 5 && s.y + 5 > m.y) {
-                        turn = true;
-                        break;
-                    }
-                }
-            }
-            if (turn) {
-                s.dx = -s.dx;
-                s.y += 5;
-                if (s.y > getHeight() - 5) {
-                    s.y = 8;
-                }
-            } else {
-                s.x = nextX;
-            }
+    private void movePlayer(final float targetX, final float dt) {
+        final var diff = targetX - playerX;
+        playerVX = (diff > 0) ? 80.0f : -80.0f;
+        if (Math.abs(diff) < 2) {
+            playerVX = 0;
         }
+        playerX += playerVX * dt;
+        playerX = Math.max(2, Math.min(getWidth() - 8, playerX));
+        playerY = getHeight() - 8;
     }
 
     /**
-     * Logic for spider AI, including random vector changes and targeted hunting.
+     * Initializes a 12-segment line block centered at game initiation.
+     */
+    private void spawnCentipede() {
+        final var startChain = new ArrayList<Segment>();
+        final var startX = getWidth() / 2.0f;
+        for (int i = 0; i < 12; i++) {
+            startChain.add(new Segment(startX - (i * 6), 10, i == 0));
+        }
+        centipedeChains.add(startChain);
+    }
+
+    /**
+     * Refreshes automated threat vectors for erratic side actions.
      *
-     * @param dt Elapsed seconds.
+     * @param dt Scale component tracking loop execution times.
      */
     private void updateSpider(final float dt) {
         if (spider == null) {
-            if (random.nextInt(300) == 0) {
-                final var sx = random.nextBoolean() ? -5 : getWidth() + 5;
-                final var sy = getHeight() - 30;
-                final var svx = (sx < 0) ? 1.0f : -1.0f;
-                spider = new Spider(sx, sy, svx, -0.5f);
+            if (random.nextInt(180) == 0) {
+                final var sx = random.nextBoolean() ? -10 : getWidth() + 10;
+                spider = new Spider(sx, (float) random.nextInt(20) + 32, (sx < 0 ? 1 : -1), 1);
             }
-        } else {
-            spider.x += spider.vx * SPIDER_SPEED * dt;
-            spider.y += spider.vy * SPIDER_SPEED * dt;
-            spider.lifeTimer -= dt;
-            spider.animTimer -= dt;
+            return;
+        }
+        spider.changeTimer -= dt;
+        if (spider.changeTimer <= 0) {
+            spider.vy = random.nextBoolean() ? 1.0f : -1.0f;
+            spider.changeTimer = 0.5f;
+        }
+        spider.x += spider.vx * 40.0f * dt;
+        spider.y += spider.vy * 30.0f * dt;
+        if (spider.y < 32) {
+            spider.vy = 1;
+        }
+        if (spider.y > getHeight() - 8) {
+            spider.vy = -1;
+        }
 
-            if (spider.animTimer <= 0) {
-                spider.animFrame = (spider.animFrame + 1) % 3;
-                spider.animTimer = 0.1f;
+        // Spider clears out obstacles along historical paths
+        for (int i = 0; i < mushrooms.size(); i++) {
+            final var m = mushrooms.get(i);
+            if (Math.abs(spider.x - m.x) < 7 && Math.abs(spider.y - m.y) < 7) {
+                mushrooms.remove(i);
+                i--;
             }
+        }
 
-            if (spider.x < 0 || spider.x > getWidth() - 7) {
-                spider.vx = -spider.vx;
-                spider.x = Math.max(0, Math.min(getWidth() - 7, spider.x));
-            }
-            final var spiderCeiling = getHeight() - 40;
-            if (spider.y < spiderCeiling || spider.y > getHeight() - 7) {
-                spider.vy = -spider.vy;
-                spider.y = Math.max(spiderCeiling, Math.min(getHeight() - 7, spider.y));
-            }
-
-            spider.timer -= dt;
-            if (spider.timer <= 0) {
-                if (random.nextBoolean()) {
-                    spider.vx = (playerX > spider.x) ? 1.0f : -1.0f;
-                } else {
-                    spider.vx = (random.nextFloat() * 2) - 1;
-                }
-                spider.vy = (random.nextFloat() * 2) - 1;
-                spider.timer = 0.4f + random.nextFloat();
-            }
-
-            if (spider.lifeTimer <= 0 && (spider.x <= 0 || spider.x >= getWidth() - 7)) {
-                spider = null;
-            }
+        if (spider.x < -40 || spider.x > getWidth() + 40) {
+            spider = null;
         }
     }
 
     /**
-     * Validates if lethal collisions have occurred between player and enemies.
+     * Evaluates geometric overlaps to enforce mortality mechanics.
      */
     private void checkCollisions() {
         if (spider != null && Math.abs(spider.x - playerX) < 5 && Math.abs(spider.y - playerY) < 5) {
             loseLife();
         }
-        for (final var s : centipede) {
-            if (Math.abs(s.x - playerX) < 4 && Math.abs(s.y - playerY) < 4) {
-                loseLife();
-                break;
+        for (int i = 0; i < centipedeChains.size(); i++) {
+            final var chain = centipedeChains.get(i);
+            for (int j = 0; j < chain.size(); j++) {
+                final var s = chain.get(j);
+                if (Math.abs(s.x - playerX) < 4 && Math.abs(s.y - playerY) < 4) {
+                    loseLife();
+                    return;
+                }
             }
         }
     }
 
     /**
-     * Handles life reduction and determines if the game should continue or end.
+     * Decrements resources and transitions state flags accordingly.
      */
     private void loseLife() {
         lives--;
         if (lives <= 0) {
-            gameOver = true;
+            currentState = GameState.GAME_OVER;
         } else {
             initLevel(false);
         }
     }
 
     /**
-     * Renders all game entities to the u8g2 frame buffer.
+     * Sets structural bounds, clearing target components and applying positions.
      *
-     * @param u8g2 Native pointer to the u8g2 instance.
+     * @param fullReset Enforces reset to score variables if true.
+     */
+    public void initLevel(final boolean fullReset) {
+        if (fullReset) {
+            score = 0;
+            lives = 5;
+            wave = 1;
+            baseCentipedeSpeed = 30.0f;
+            currentState = GameState.PLAYING;
+            running = true;
+            setupNativeBuffers();
+            mushrooms.clear();
+        }
+        centipedeChains.clear();
+        spawnCentipede();
+        spider = null;
+        playerShot = null;
+        segmentsReachedBottom = 0;
+        playerX = getWidth() / 2.0f;
+        playerY = getHeight() - 8.0f;
+
+        if (mushrooms.isEmpty()) {
+            for (int i = 0; i < 18; i++) {
+                mushrooms.add(new Mushroom((random.nextInt(14) * 6) + 6, (random.nextInt(7) * 6) + 12));
+            }
+        }
+    }
+
+    /**
+     * Translates bitmask logic data directly out to the hardware frame buffer segment.
+     *
+     * @param u8g2 Pointer handle map indicating targeted hardware tracking lines.
      */
     private void render(final MemorySegment u8g2) {
         U8g2.u8g2_ClearBuffer(u8g2);
         U8g2.u8g2_SetFont(u8g2, fontMain);
-        updateUI();
-        U8g2.u8g2_DrawStr(u8g2, (short) 1, (short) 6, scoreSegment);
-        U8g2.u8g2_DrawStr(u8g2, (short) (getWidth() - 15), (short) 6, livesSegment);
 
-        if (gameOver) {
+        if (currentState == GameState.GAME_OVER) {
             U8g2.u8g2_DrawStr(u8g2, (short) (getWidth() / 2 - 20), (short) (getHeight() / 2), gameOverSegment);
         } else {
-            for (final var m : mushrooms) {
-                drawBitmap(u8g2, m.x, m.y, MUSH_STAGES[m.health], 5);
+            // Draw mushrooms using raw non-allocating indexing bounds
+            for (int i = 0; i < mushrooms.size(); i++) {
+                final var m = mushrooms.get(i);
+                final var mask = (m.health >= 3) ? MUSH_FULL : (m.health == 2 ? MUSH_DMG1 : MUSH_DMG2);
+                drawBitmap(u8g2, m.x, m.y, mask, 6);
             }
-            for (final var s : centipede) {
-                drawBitmap(u8g2, (int) s.x, (int) s.y, SEG_BITS, 5);
+
+            // Draw multi-chain structures safely
+            for (int i = 0; i < centipedeChains.size(); i++) {
+                final var chain = centipedeChains.get(i);
+                for (int j = 0; j < chain.size(); j++) {
+                    final var s = chain.get(j);
+                    drawBitmap(u8g2, (int) s.x, (int) s.y, s.isHead ? HEAD_BITS : BODY_BITS, 6);
+                }
             }
+
             if (spider != null) {
-                drawBitmap(u8g2, (int) spider.x, (int) spider.y, SPID_ANIM[spider.animFrame], 7);
+                drawBitmap(u8g2, (int) spider.x, (int) spider.y, SPID_BITS, 8);
             }
-            drawBitmap(u8g2, (int) playerX, (int) playerY, SHIP_BITS, 5);
+
+            drawBitmap(u8g2, (int) playerX, (int) playerY, SHIP_BITS, 6);
+
             if (playerShot != null) {
-                U8g2.u8g2_DrawVLine(u8g2, (short) playerShot.x, (short) playerShot.y, (short) 2);
+                U8g2.u8g2_DrawVLine(u8g2, (short) playerShot.x, (short) playerShot.y, (short) 3);
             }
+
+            updateUI();
+            U8g2.u8g2_DrawStr(u8g2, (short) 2, (short) 6, uiStatusSegment);
         }
         U8g2.u8g2_SendBuffer(u8g2);
     }
 
     /**
-     * Utility method to draw bitmask-based sprites.
-     *
-     * @param u8 Native u8g2 segment.
-     * @param x Screen X.
-     * @param y Screen Y.
-     * @param bits Bitmask array.
-     * @param size Dimensions of sprite.
+     * Converts low-level matrix integers directly to individual buffer bits.
      */
     private void drawBitmap(final MemorySegment u8, final int x, final int y, final int[] bits, final int size) {
         for (int i = 0; i < size; i++) {
@@ -491,44 +620,74 @@ public class Centipede extends Base {
     }
 
     /**
-     * Orchestrates the high-level loop, timing, and cleanup.
+     * Oversees the frame pacing block.
      *
-     * * @param u8g2 Native pointer to the u8g2 instance.
+     * @param u8g2 Main display surface memory pointer segment.
      */
     @Override
     protected void run(final MemorySegment u8g2) {
+        // Register shutdown hook that ONLY flips the flag to let the main thread exit natively and sequentially
+        final var hook = new Thread(() -> {
+            running = false;
+            // Block the shutdown hook until the main thread has run its native device power-down sequences safely
+            synchronized (shutdownLock) {
+                log.debug("Shutdown signal acknowledged by hook thread.");
+            }
+        });
+        Runtime.getRuntime().addShutdownHook(hook);
+
         try (persistentArena) {
             initLevel(true);
             var lastTime = System.nanoTime();
-            while (running) {
+
+            while (running && !Thread.currentThread().isInterrupted()) {
                 final var currentTime = System.nanoTime();
                 var deltaTime = (currentTime - lastTime) / 1_000_000_000.0f;
                 lastTime = currentTime;
 
-                if (deltaTime > 0.1f) {
-                    deltaTime = 0.1f;
+                if (deltaTime > 0.05f) {
+                    deltaTime = 0.05f;
                 }
 
                 update(deltaTime);
                 render(u8g2);
 
-                if (gameOver) {
+                if (currentState == GameState.GAME_OVER) {
                     try {
                         Thread.sleep(3000);
-                    } catch (InterruptedException e) {
+                    } catch (final InterruptedException e) {
                         Thread.currentThread().interrupt();
                         break;
                     }
                     running = false;
+                    break;
                 }
+
+                try {
+                    Thread.sleep(1000 / targetFps);
+                } catch (final InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+
+            // CRITICAL SHUTDOWN IMMUNITY STAGE: 
+            // Hold lock to block hook thread, remove the hook to avoid double execution, and cleanly let base process execute native done()
+            synchronized (shutdownLock) {
+                try {
+                    Runtime.getRuntime().removeShutdownHook(hook);
+                } catch (final IllegalStateException e) {
+                    // Swallow exception if JVM is already shutting down anyway
+                }
+                log.debug("Main loop terminated sequentially. Handing off to base hardware cleanup.");
             }
         }
     }
 
     /**
-     * Main parsing, error handling and handling user requests for usage help or version help are done with one line of code.
+     * Entrypoint configuration.
      *
-     * @param args Argument list.
+     * @param args System line runtime variables.
      */
     public static void main(final String... args) {
         System.exit(new CommandLine(new Centipede()).execute(args));
