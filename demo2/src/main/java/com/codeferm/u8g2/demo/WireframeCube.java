@@ -15,7 +15,8 @@ import picocli.CommandLine.Option;
 /**
  * 3D Wireframe Cube with dynamic scaling, randomized movement, and FPS control.
  * <p>
- * Optimized for FFM with zero-allocation in the main loop and precise nano-pacing.
+ * Optimized for FFM with zero-allocation in the main loop and precise nano-pacing. Coordinated via explicit thread lifecycle
+ * management to prevent concurrent hardware teardown memory pointer corruption during JVM shutdown.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -55,6 +56,16 @@ public class WireframeCube extends Base {
     private final Random random = new Random();
 
     /**
+     * Application execution thread loop controller.
+     */
+    private volatile boolean running = true;
+
+    /**
+     * Active thread handling the drawing loop execution.
+     */
+    private Thread executionThread;
+
+    /**
      * Clips coordinates to display boundaries to prevent driver-level wrapping artifacts.
      */
     private void drawClippedLine(final MemorySegment u8, final int x1, final int y1, final int x2, final int y2, final int w,
@@ -90,10 +101,18 @@ public class WireframeCube extends Base {
         final var cameraDistance = 3.6;
         final var projectionScale = screenH * 0.60;
 
+        this.executionThread = Thread.currentThread();
+
         log.info("Starting WireframeCube demo at {} FPS. No allocations in loop.", fps);
 
-        while (true) {
+        while (this.running && !this.executionThread.isInterrupted()) {
             final var startTime = System.nanoTime();
+
+            // Double-check execution status before making any native FFM transitions
+            if (!this.running || this.executionThread.isInterrupted()) {
+                break;
+            }
+
             U8g2.u8g2_ClearBuffer(u8);
 
             var minX = 1000;
@@ -152,6 +171,11 @@ public class WireframeCube extends Base {
                         screenW, screenH);
             }
 
+            // Confirm safety state right before passing memory layouts to physical I/O transit
+            if (!this.running || this.executionThread.isInterrupted()) {
+                break;
+            }
+
             U8g2.u8g2_SendBuffer(u8);
 
             // Update physics
@@ -186,7 +210,7 @@ public class WireframeCube extends Base {
             if (sleepTimeNs > 0) {
                 try {
                     TimeUnit.NANOSECONDS.sleep(sleepTimeNs);
-                } catch (InterruptedException e) {
+                } catch (final InterruptedException e) {
                     Thread.currentThread().interrupt();
                     break;
                 }
@@ -196,15 +220,36 @@ public class WireframeCube extends Base {
 
     @Override
     protected void run(final MemorySegment u8g2) {
-        drawCube(u8g2);
+        try {
+            drawCube(u8g2);
+        } finally {
+            this.running = false;
+            log.info("WireframeCube animation execution complete.");
+        }
     }
 
     /**
-     * Main parsing, error handling and handling user requests for usage help or version help are done with one line of code.
+     * Main parsing, error handling and handling user requests.
      *
      * @param args Argument list.
      */
-    public static void main(String... args) {
-        System.exit(new CommandLine(new WireframeCube()).execute(args));
+    public static void main(final String... args) {
+        final var app = new WireframeCube();
+
+        // Application-level signal handler catches Ctrl+C to isolate Base from running teardown concurrently
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            app.running = false;
+            if (app.executionThread != null) {
+                app.executionThread.interrupt();
+                try {
+                    // Force the JVM hook sequence to block until the loop escapes native spaces safely
+                    app.executionThread.join(1000);
+                } catch (final InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }));
+
+        System.exit(new CommandLine(app).execute(args));
     }
 }

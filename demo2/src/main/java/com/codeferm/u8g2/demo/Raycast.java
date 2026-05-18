@@ -12,7 +12,8 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
 /**
- * This demo simulates a 3D environment on a monochrome display using FFM.
+ * High-performance 3D Raycasting Engine demo simulation for monochrome displays via FFM. Addresses asynchronous interrupt
+ * conditions cleanly via standard shutdown hooks and fixes dimensional array coordinate indexing.
  *
  * @author Steven P. Goldsmith
  * @version 1.0.0
@@ -24,13 +25,13 @@ import picocli.CommandLine.Option;
 public class Raycast extends Base {
 
     /**
-     * FPS.
+     * Target execution frames per second parameter option.
      */
     @Option(names = {"-f", "--fps"}, description = "Frames per second", defaultValue = "30")
     private int fps;
 
     /**
-     * World Map: 1 represents a wall, 0 represents empty space.
+     * World Map Layout Definition Matrix: 1 represents structural boundaries, 0 is clear space.
      */
     private static final int[][] MAP = {
         {1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
@@ -43,18 +44,57 @@ public class Raycast extends Base {
         {1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
     };
 
-    // Current player coordinates
-    private double posX = 1.5, posY = 1.5;
-    // Current direction vector (Where the player is facing)
-    private double dirX = 1.0, dirY = 0.0;
-    // Camera plane (Field of View - must be perpendicular to direction)
-    private double planeX = 0.0, planeY = 0.66;
+    /**
+     * Asynchronous execution state tracking flag mapped to runtime shutdown triggers.
+     */
+    private volatile boolean running = true;
+
+    /**
+     * Current coordinate offset location mapping along the X axis.
+     */
+    private double posX = 1.5;
+
+    /**
+     * Current coordinate offset location mapping along the Y axis.
+     */
+    private double posY = 1.5;
+
+    /**
+     * Current directional trajectory look vector along the X axis component.
+     */
+    private double dirX = 1.0;
+
+    /**
+     * Current directional trajectory look vector along the Y axis component.
+     */
+    private double dirY = 0.0;
+
+    /**
+     * Viewport projection camera plane alignment vector along the X axis component.
+     */
+    private double planeX = 0.0;
+
+    /**
+     * Viewport projection camera plane alignment vector along the Y axis component.
+     */
+    private double planeY = 0.66;
+
+    /**
+     * Random seed value instance mapping for execution trajectory generation passes.
+     */
     private final Random random = new Random();
 
     /**
-     * Renders the 3D scene by casting a ray for every horizontal pixel.
+     * Default constructor initializing base properties.
+     */
+    public Raycast() {
+        super();
+    }
+
+    /**
+     * Renders a single frame projection pass across horizontal boundaries using a DDA strategy.
      *
-     * @param u8g2 MemorySegment handle to the u8g2 struct.
+     * @param u8g2 MemorySegment structure descriptor handle mapping down to the active device buffer.
      */
     public void render(final MemorySegment u8g2) {
         final var w = getWidth();
@@ -64,16 +104,16 @@ public class Raycast extends Base {
         // Scan every vertical stripe of the screen
         for (var x = 0; x < w; x++) {
             // Transform screen coordinate x to camera-space coordinate (-1 to 1)
-            final var cameraX = 2 * x / (double) w - 1;
+            final var cameraX = (2.0 * x / w) - 1.0;
             // Calculate direction of the ray
-            final var rayDirX = dirX + planeX * cameraX;
-            final var rayDirY = dirY + planeY * cameraX;
+            final var rayDirX = dirX + (planeX * cameraX);
+            final var rayDirY = dirY + (planeY * cameraX);
             // Which grid square the ray is currently in
             var mapX = (int) posX;
             var mapY = (int) posY;
             // Distance the ray has to travel to cross one grid cell line
-            final var deltaDistX = Math.abs(1 / rayDirX);
-            final var deltaDistY = Math.abs(1 / rayDirY);
+            final var deltaDistX = (rayDirX == 0) ? Double.MAX_VALUE : Math.abs(1.0 / rayDirX);
+            final var deltaDistY = (rayDirY == 0) ? Double.MAX_VALUE : Math.abs(1.0 / rayDirY);
             // Distance from current position to the first grid lines
             var sideDistX = 0.0;
             var sideDistY = 0.0;
@@ -102,7 +142,8 @@ public class Raycast extends Base {
             }
 
             // --- DDA Algorithm Loop ---
-            while (MAP[mapX][mapY] == 0) {
+            // Coordinate matrices mapped cleanly to array bounds syntax [row][column] (Y represents rows, X columns)
+            while ((mapY >= 0) && (mapY < MAP.length) && (mapX >= 0) && (mapX < MAP[0].length) && (MAP[mapY][mapX] == 0)) {
                 if (sideDistX < sideDistY) {
                     sideDistX += deltaDistX;
                     mapX += stepX;
@@ -116,16 +157,21 @@ public class Raycast extends Base {
 
             // Calculate distance to the wall projected onto the camera direction
             if (side == 0) {
-                perpWallDist = (mapX - posX + (1 - stepX) / 2.0) / rayDirX;
+                perpWallDist = (mapX - posX + ((1.0 - stepX) / 2.0)) / rayDirX;
             } else {
-                perpWallDist = (mapY - posY + (1 - stepY) / 2.0) / rayDirY;
+                perpWallDist = (mapY - posY + ((1.0 - stepY) / 2.0)) / rayDirY;
+            }
+
+            // Avoid division by zero bugs if player steps right up against a boundary line
+            if (perpWallDist <= 0.0) {
+                perpWallDist = 0.01;
             }
 
             // Calculate height of the wall slice based on distance
             final var lineHeight = (int) (h / perpWallDist);
             // Calculate the screen pixels where the wall slice starts and ends
-            final var drawStart = Math.max(0, -lineHeight / 2 + h / 2);
-            final var drawEnd = Math.min(h - 1, lineHeight / 2 + h / 2);
+            final var drawStart = Math.max(0, (-lineHeight / 2) + (h / 2));
+            final var drawEnd = Math.min(h - 1, (lineHeight / 2) + (h / 2));
 
             // Draw the vertical line representing the wall
             U8g2.u8g2_DrawLine(u8g2, (short) x, (short) drawStart, (short) x, (short) drawEnd);
@@ -134,53 +180,69 @@ public class Raycast extends Base {
     }
 
     /**
-     * Updates player position and handles collisions.
+     * Adjusts structural placement offsets and applies collision boundary tracking structures.
+     *
+     * @param action Targeted structural routing operation identifier.
      */
     private void update(final int action) {
         final var rotSpeed = 0.08;
         final var moveSpeed = 0.05;
         switch (action) {
             case 0 -> { // Forward
-                if (MAP[(int) (posX + dirX * moveSpeed)][(int) posY] == 0) {
-                    posX += dirX * moveSpeed;
+                final var nextX = posX + (dirX * moveSpeed);
+                final var nextY = posY + (dirY * moveSpeed);
+                // Grid bounds check mapping matching row/col definitions
+                if ((nextY >= 0) && (nextY < MAP.length) && (int) posX >= 0 && (int) posX < MAP[0].length
+                        && MAP[(int) posY][(int) nextX] == 0) {
+                    posX = nextX;
                 }
-                if (MAP[(int) posX][(int) (posY + dirY * moveSpeed)] == 0) {
-                    posY += dirY * moveSpeed;
+                if (((int) posX >= 0) && ((int) posX < MAP[0].length) && nextY >= 0 && nextY < MAP.length
+                        && MAP[(int) nextY][(int) posX] == 0) {
+                    posY = nextY;
                 }
             }
             case 1 -> { // Backward
-                if (MAP[(int) (posX - dirX * moveSpeed)][(int) posY] == 0) {
-                    posX -= dirX * moveSpeed;
+                final var nextX = posX - (dirX * moveSpeed);
+                final var nextY = posY - (dirY * moveSpeed);
+                if ((nextY >= 0) && (nextY < MAP.length) && (int) posX >= 0 && (int) posX < MAP[0].length
+                        && MAP[(int) posY][(int) nextX] == 0) {
+                    posX = nextX;
                 }
-                if (MAP[(int) posX][(int) (posY - dirY * moveSpeed)] == 0) {
-                    posY -= dirY * moveSpeed;
+                if (((int) posX >= 0) && ((int) posX < MAP[0].length) && nextY >= 0 && nextY < MAP.length
+                        && MAP[(int) nextY][(int) posX] == 0) {
+                    posY = nextY;
                 }
             }
             case 2 ->
                 rotate(rotSpeed);  // Turn Left
             case 3 ->
                 rotate(-rotSpeed); // Turn Right
+            default -> {
+                // No operational state shift applied
+            }
         }
     }
 
     /**
-     * Rotates the camera using a 2D rotation matrix.
+     * Multiplies coordinates against a standard 2D rotation structural matrix framework.
+     *
+     * @param angle Numerical angular value increment to skew layout frames by.
      */
     private void rotate(final double angle) {
         final var cosA = Math.cos(angle);
         final var sinA = Math.sin(angle);
         final var oldDirX = dirX;
-        dirX = dirX * cosA - dirY * sinA;
-        dirY = oldDirX * sinA + dirY * cosA;
+        dirX = (dirX * cosA) - (dirY * sinA);
+        dirY = (oldDirX * sinA) + (dirY * cosA);
         final var oldPlaneX = planeX;
-        planeX = planeX * cosA - planeY * sinA;
-        planeY = oldPlaneX * sinA + planeY * cosA;
+        planeX = (planeX * cosA) - (planeY * sinA);
+        planeY = (oldPlaneX * sinA) + (planeY * cosA);
     }
 
     /**
-     * Implementation of the Base run method.
+     * Managed implementation overriding the abstract base loop cycle.
      *
-     * @param u8g2 MemorySegment handle to the u8g2 structure.
+     * @param u8g2 Native tracking handle pointing down to unmanaged runtime data allocations.
      */
     @Override
     protected void run(final MemorySegment u8g2) {
@@ -188,29 +250,44 @@ public class Raycast extends Base {
         var currentAction = 0;
         log.info("Starting Raycast demo (2000 frames)...");
 
-        for (var i = 0; i < 2000; i++) {
-            // Pick a new random movement every 20-40 frames
-            if (i % (20 + random.nextInt(20)) == 0) {
-                currentAction = random.nextInt(4);
-            }
-            render(u8g2);
-            update(currentAction);
-            try {
+        // Attaching active thread coordination hooks to clean loops up during interrupt loops
+        final var mainThread = Thread.currentThread();
+        final var shutdownHook = new Thread(() -> {
+            log.debug("Interrupt caught! Changing tracking flags to release rendering loops...");
+            this.running = false;
+            mainThread.interrupt();
+        });
+        Runtime.getRuntime().addShutdownHook(shutdownHook);
+
+        try {
+            for (var i = 0; (i < 2000) && running; i++) {
+                // Pick a new random movement every 20-40 frames
+                if (i % (20 + random.nextInt(20)) == 0) {
+                    currentAction = random.nextInt(4);
+                }
+                render(u8g2);
+                update(currentAction);
+
                 Thread.sleep(frameDelay);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
             }
+        } catch (InterruptedException e) {
+            log.debug("Processing cycle interrupted during application finalization sequences.");
+        } finally {
+            try {
+                Runtime.getRuntime().removeShutdownHook(shutdownHook);
+            } catch (IllegalStateException e) {
+                // Catch standard faults if processing teardown is active via secondary routines
+            }
+            log.info("Demo complete.");
         }
-        log.info("Demo complete.");
     }
 
     /**
-     * Main parsing with automatic type conversion.
+     * Execution script driver entry sequence mapping options array values directly to command parsers.
      *
-     * @param args Argument list.
+     * @param args Array mapping configurations structure details input strings.
      */
-    public static void main(String... args) {
+    public static void main(final String... args) {
         System.exit(new CommandLine(new Raycast()).execute(args));
     }
 }
