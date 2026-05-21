@@ -5,7 +5,6 @@ package com.codeferm.periphery.demo;
 
 import com.codeferm.periphery.device.MultiRgbLed;
 import com.codeferm.periphery.device.PwmDeviceFactory;
-import com.codeferm.periphery.device.PwmLed;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine;
@@ -13,23 +12,30 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
 /**
- * High-performance RGB PWM fading demo using the unified PwmDevice interface.
+ * High-performance Polymorphic RGB PWM Demo using the unified PwmDevice interface.
  * <p>
- * This demo utilizes the Single-Ownership pattern where the {@link MultiRgbLed} acts as the root controller for three
- * {@link PwmLed} instances. The use of {@link PwmDeviceFactory} ensures that the fading logic is transport-agnostic, supporting
- * both native hardware PWM and software-timed GPIO toggling.
+ * This demo utilizes the Single-Ownership pattern where the {@link MultiRgbLed} acts as the root controller for three polymorphic
+ * channels. The use of {@link PwmDeviceFactory} ensures that the execution logic is transport-agnostic, supporting both native
+ * hardware PWM and software-timed GPIO toggling across multiple animation styles.
  * </p>
  *
  * @author Steven P. Goldsmith
- * @version 1.1.0
+ * @version 1.0.0
  * @since 1.0.0
  */
 @Slf4j
-@Command(name = "RgbFfmPwm",
+@Command(name = "RgbLed",
         mixinStandardHelpOptions = true,
-        version = "1.0.0-SNAPSHOT",
-        description = "Fades an RGB LED using FFM-backed PWM.")
+        version = "1.1.0",
+        description = "Fades or sweeps an RGB LED spectrum using FFM-backed PWM.")
 public final class RgbLed extends AbstractDemo {
+
+    /**
+     * Animation pattern choices.
+     */
+    public enum Pattern {
+        FADE, SPECTRUM
+    }
 
     /**
      * Operation mode: HW (Hardware Sysfs) or SW (Software GPIO Bit-bang).
@@ -68,15 +74,20 @@ public final class RgbLed extends AbstractDemo {
     private int timeout;
 
     /**
+     * Active animation sequence strategy choice. Defaults to the comprehensive multi-channel spectrum mix.
+     */
+    @Option(names = {"-p", "--pattern"}, description = "Pattern: FADE or SPECTRUM.", defaultValue = "SPECTRUM")
+    private Pattern pattern;
+
+    /**
      * 1ms period (1kHz) in nanoseconds for flicker-free fading.
      */
     private static final long PERIOD_NS = 1_000_000L;
 
     /**
-     * Orchestrates the RGB fading sequence.
+     * Orchestrates the RGB fading or spectrum sequence.
      * <p>
-     * Initializes the composite LED device and iterates through color fades until the timeout is reached or the thread is
-     * interrupted.
+     * Initializes the composite LED device and routes execution to the chosen runtime loop pattern until the timeout is crossed.
      * </p>
      *
      * @return Exit code (0 for success, 1 for failure).
@@ -85,20 +96,17 @@ public final class RgbLed extends AbstractDemo {
     @Override
     public Integer call() throws Exception {
         addTerminalHook();
-        log.info("Starting RGB PWM Demo [Mode: {}, Device: {}]", mode, device);
+        log.info("Starting RGB PWM Demo [Mode: {}, Pattern: {}, Device: {}]", this.mode, this.pattern, this.device);
 
-        // Single Ownership via createLed() factory helper
+        // Single Ownership via polymorphic factory mappings
         try (final var led = createLed()) {
             led.enable();
-            final var endTime = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(timeout);
+            final var endTime = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(this.timeout);
 
-            while (System.currentTimeMillis() < endTime && !Thread.currentThread().isInterrupted()) {
-                log.debug("Fading Red...");
-                fade(led, 0, endTime);
-                log.debug("Fading Green...");
-                fade(led, 1, endTime);
-                log.debug("Fading Blue...");
-                fade(led, 2, endTime);
+            if (this.pattern == Pattern.SPECTRUM) {
+                runSpectrumLoop(led, endTime);
+            } else {
+                runFadeLoop(led, endTime);
             }
 
             led.off(PERIOD_NS);
@@ -113,6 +121,68 @@ public final class RgbLed extends AbstractDemo {
             return 1;
         }
         return 0;
+    }
+
+    /**
+     * Runs the sequential single-line discrete fading loop pattern.
+     *
+     * @param led The multi-channel composite manager.
+     * @param endTime Cutoff timestamp threshold context.
+     * @throws InterruptedException On execution loop break.
+     */
+    private void runFadeLoop(final MultiRgbLed led, final long endTime) throws InterruptedException {
+        while (System.currentTimeMillis() < endTime && !Thread.currentThread().isInterrupted()) {
+            log.debug("Fading Red...");
+            fade(led, 0, endTime);
+            log.debug("Fading Green...");
+            fade(led, 1, endTime);
+            log.debug("Fading Blue...");
+            fade(led, 2, endTime);
+        }
+    }
+
+    /**
+     * Runs the zero-allocation color spectrum wheel blend loop.
+     *
+     * @param led The multi-channel composite manager.
+     * @param endTime Cutoff timestamp threshold context.
+     * @throws InterruptedException On execution loop break.
+     */
+    private void runSpectrumLoop(final MultiRgbLed led, final long endTime) throws InterruptedException {
+        log.info("Beginning zero-allocation spectrum sweep...");
+        var hue = 0;
+
+        while (System.currentTimeMillis() < endTime && !Thread.currentThread().isInterrupted()) {
+            long rNs = 0L;
+            long gNs = 0L;
+            long bNs = 0L;
+
+            // Map color sectors directly to nanosecond ratios without object transformations
+            if (hue < 60) {
+                rNs = PERIOD_NS;
+                gNs = (PERIOD_NS * hue) / 60;
+            } else if (hue < 120) {
+                rNs = (PERIOD_NS * (120 - hue)) / 60;
+                gNs = PERIOD_NS;
+            } else if (hue < 180) {
+                gNs = PERIOD_NS;
+                bNs = (PERIOD_NS * (hue - 120)) / 60;
+            } else if (hue < 240) {
+                gNs = (PERIOD_NS * (240 - hue)) / 60;
+                bNs = PERIOD_NS;
+            } else if (hue < 300) {
+                rNs = (PERIOD_NS * (hue - 240)) / 60;
+                bNs = PERIOD_NS;
+            } else {
+                rNs = PERIOD_NS;
+                bNs = (PERIOD_NS * (360 - hue)) / 60;
+            }
+
+            led.setRgb(PERIOD_NS, rNs, gNs, bNs);
+            hue = (hue + 1) % 360;
+
+            TimeUnit.MILLISECONDS.sleep(15);
+        }
     }
 
     /**
@@ -160,16 +230,16 @@ public final class RgbLed extends AbstractDemo {
     /**
      * Factory helper to construct a MultiRgbLed with injected transports.
      * <p>
-     * This method creates three distinct PWM transports based on CLI options and wraps them into a single high-level controller.
+     * Feeds the factory polymorphic interfaces directly into the composite holder.
      * </p>
      *
      * @return Fully initialized MultiRgbLed instance.
      */
     private MultiRgbLed createLed() {
         return new MultiRgbLed(
-                new PwmLed(PwmDeviceFactory.create(mode, device, redLine)),
-                new PwmLed(PwmDeviceFactory.create(mode, device, greenLine)),
-                new PwmLed(PwmDeviceFactory.create(mode, device, blueLine))
+                PwmDeviceFactory.create(this.mode, this.device, this.redLine),
+                PwmDeviceFactory.create(this.mode, this.device, this.greenLine),
+                PwmDeviceFactory.create(this.mode, this.device, this.blueLine)
         );
     }
 
