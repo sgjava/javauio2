@@ -1,8 +1,6 @@
 #!/bin/bash
 #
-# Created on February 1, 2026
-#
-# @author: sgoldsmith
+# Updated for Ubuntu 26.04 LTS
 #
 # Install dependencies, JDK 25, and Multi-Arch SDL2 Cross-Compile Tooling.
 #
@@ -18,10 +16,21 @@ JAVA_TMP="$HOME/.java_tmp"
 JEXTRACT_SRC="$HOME/jextract"
 JEXTRACT_BIN_DIR="$HOME/.jextract/bin"
 
+# Helper function to prevent unattended-upgrades locks from stopping the script
+wait_for_apt_lock() {
+    sudo systemctl stop unattended-upgrades || true
+    while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || sudo fuser /var/lib/apt/lists/lock >/dev/null 2>&1 ; do
+        echo "Waiting for apt/dpkg lock..."
+        sleep 2
+    done
+}
+
 echo "--------------------------------------------------"
 echo "STEP 1: System Prep & Tmp Dir"
 echo "--------------------------------------------------"
-sudo apt update && sudo apt install -y curl zip unzip wget xz-utils git build-essential clang-18 libclang-18-dev
+wait_for_apt_lock
+sudo apt update && sudo apt install -y curl zip unzip wget xz-utils git build-essential clang libclang-dev
+
 mkdir -p "$JAVA_TMP"
 chmod 777 "$JAVA_TMP"
 
@@ -64,37 +73,35 @@ if [ "$ARCH" == "x86_64" ]; then
     sudo dpkg --add-architecture arm64
     sudo dpkg --add-architecture armhf
 
-    # 2. Fix the "404 Not Found" for ARM packages on x86 mirrors
-    # Handle the classic /etc/apt/sources.list
+    # 2. Scope existing default Ubuntu sources to amd64 only (DEB822 format)
+    SOURCES_FILE="/etc/apt/sources.list.d/ubuntu.sources"
+    if [ -f "$SOURCES_FILE" ]; then
+        if ! grep -q "Architectures:" "$SOURCES_FILE"; then
+            sudo sed -i '/^URIs:/i Architectures: amd64' "$SOURCES_FILE"
+        else
+            sudo sed -i 's/^Architectures:.*/Architectures: amd64/' "$SOURCES_FILE"
+        fi
+    fi
+
+    # Handle standard sources list if present
     if [ -f /etc/apt/sources.list ]; then
         sudo sed -i 's/^deb http/deb [arch=amd64] http/g' /etc/apt/sources.list
         sudo sed -i 's/^deb-src http/deb-src [arch=amd64] http/g' /etc/apt/sources.list
     fi
     
-    # Handle the Noble (24.04) DEB822 format in /etc/apt/sources.list.d/ubuntu.sourcesm
-    if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
-        # If 'Architectures' line exists, make it 'amd64'. If not, we'd need to add it, 
-        # but usually Noble includes it as a blank or default.
-        if grep -q "Architectures:" /etc/apt/sources.list.d/ubuntu.sources; then
-            sudo sed -i 's/^Architectures: .*/Architectures: amd64/' /etc/apt/sources.list.d/ubuntu.sources
-        else
-            # Append it to the end of each stanza (simple version)
-            sudo sed -i '/^URIs:/i Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
-        fi
-    fi
-
-    # 3. Add the Ports mirrors for ARM
+    # 3. Add the Ports mirrors for ARM architectures
     sudo tee /etc/apt/sources.list.d/arm-ports.list <<EOF
 deb [arch=arm64,armhf] http://ports.ubuntu.com/ubuntu-ports/ $UBUNTU_CODENAME main restricted universe multiverse
 deb [arch=arm64,armhf] http://ports.ubuntu.com/ubuntu-ports/ $UBUNTU_CODENAME-updates main restricted universe multiverse
 deb [arch=arm64,armhf] http://ports.ubuntu.com/ubuntu-ports/ $UBUNTU_CODENAME-security main restricted universe multiverse
 EOF
 
+    wait_for_apt_lock
     sudo apt update
     
-    # 4. Install Cross Compilers and Real SDL2 target libraries
+    # 4. Install Cross Compilers, target libs, and binfmt replacement for qemu-user-static
     sudo apt install -y libclang-dev llvm gcc-arm-linux-gnueabihf gcc-aarch64-linux-gnu cmake \
-                        qemu-user qemu-user-static \
+                        qemu-user qemu-user-binfmt \
                         libsdl2-dev:amd64 libsdl2-dev:arm64 libsdl2-dev:armhf
 
     sdk install maven || true
@@ -117,7 +124,7 @@ EOF
     LLVM_LIB_PATH="$LLVM_BASE_PATH/lib"
     
     ACTUAL_CLANG_SO=$(ls $LLVM_LIB_PATH/libclang-[0-9]*.so | head -n 1)
-    if [ ! -z "$ACTUAL_CLANG_SO" ]; then
+    if [ -n "$ACTUAL_CLANG_SO" ]; then
         echo "Repairing libclang symlink: $ACTUAL_CLANG_SO -> $LLVM_LIB_PATH/libclang.so"
         sudo ln -sf "$ACTUAL_CLANG_SO" "$LLVM_LIB_PATH/libclang.so"
         sudo ln -sf "$ACTUAL_CLANG_SO" "$LLVM_LIB_PATH/libclang.so.1"
