@@ -74,7 +74,7 @@ This repository contains more than just a library; it includes exhaustive demos 
 # Download project
 sudo apt install git
 cd ~/
-git clone --depth 1 [https://github.com/sgjava/javauio2.git](https://github.com/sgjava/javauio2.git)
+git clone --depth 1 https://github.com/sgjava/javauio2.git
 
 # Setup and Install
 cd ~/javauio2/scripts
