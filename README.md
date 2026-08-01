@@ -3,7 +3,7 @@
 ![Title](images/title.png)
 
 [![JDK 25 LTS](https://img.shields.io/badge/JDK-25_LTS-orange.svg)](https://openjdk.java.net/projects/jdk/25/)
-[![Ubuntu 24.04](https://img.shields.io/badge/Ubuntu-24.04_Noble-blue.svg)](https://ubuntu.com/blog/whats-new-in-security-for-ubuntu-24-04-lts)
+[![Ubuntu 26.04](https://img.shields.io/badge/Ubuntu-26.04_Resilient-blue.svg)](https://ubuntu.com/blog/whats-new-in-security-for-ubuntu-26-04-lts)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Arch: ARM64](https://img.shields.io/badge/Arch-ARM64%20(v8)-green.svg)](https://github.com/sgjava/javauio2)
 [![Arch: ARM32](https://img.shields.io/badge/Arch-ARM32%20(v7)-yellow.svg)](https://github.com/sgjava/javauio2)

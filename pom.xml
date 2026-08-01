@@ -33,11 +33,9 @@
     <profiles>
         <profile>
             <id>x86_64</id>
-            <!--
-                        <activation>
-                            <activeByDefault>true</activeByDefault>
-                        </activation>
-            -->
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
             <properties>
                 <native.arch>x86_64</native.arch>
             </properties>
@@ -50,9 +48,11 @@
         </profile>
         <profile>
             <id>arm64</id>
-            <activation>
-                <activeByDefault>true</activeByDefault>
-            </activation>            
+            <!--  
+                        <activation>
+                            <activeByDefault>true</activeByDefault>
+                        </activation>
+            -->
             <properties>
                 <native.arch>arm64</native.arch>
             </properties>

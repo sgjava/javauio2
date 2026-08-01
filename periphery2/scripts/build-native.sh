@@ -24,7 +24,12 @@ WORK_ARTIFACTS="$WORK_DIR/build-artifacts/$ARCH"
 GEN_DIR="$MODULE_ROOT/target/generated-sources/jextract"
 RES_DIR="$MODULE_ROOT/target/classes/native"
 
-LLVM_PATH=$(ls -d /usr/lib/llvm-* | sort -V | tail -n 1)/lib
+# Explicitly target stable LLVM version (e.g., LLVM 18)
+LLVM_PATH="/usr/lib/llvm-18/lib"
+if [ ! -d "$LLVM_PATH" ]; then
+    # Fallback: grab highest version up to 19 if 18 isn't found
+    LLVM_PATH=$(ls -d /usr/lib/llvm-{18,19,17,16,15} 2>/dev/null | sort -V | tail -n 1)/lib
+fi
 export LD_LIBRARY_PATH=$LLVM_PATH
 
 echo "--- Architecture:    $ARCH ---"

@@ -21,7 +21,7 @@ JEXTRACT_BIN_DIR="$HOME/.jextract/bin"
 echo "--------------------------------------------------"
 echo "STEP 1: System Prep & Tmp Dir"
 echo "--------------------------------------------------"
-sudo apt update && sudo apt install -y curl zip unzip wget xz-utils git build-essential
+sudo apt update && sudo apt install -y curl zip unzip wget xz-utils git build-essential clang-18 libclang-18-dev
 mkdir -p "$JAVA_TMP"
 chmod 777 "$JAVA_TMP"
 
