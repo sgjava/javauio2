@@ -1,7 +1,7 @@
 ![Title](images/title.png)
 
 [![JDK 25 LTS](https://img.shields.io/badge/JDK-25_LTS-orange.svg)](https://openjdk.java.net/projects/jdk/25)
-[![Ubuntu 26.04](https://img.shields.io/badge/Ubuntu-26.04_Resilient-blue.svg)](https://releases.ubuntu.com/resolute)
+[![Ubuntu 26.04](https://img.shields.io/badge/Ubuntu-26.04_Resolute-blue.svg)](https://releases.ubuntu.com/resolute)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Arch: ARM64](https://img.shields.io/badge/Arch-ARM64%20(v8)-green.svg)](https://en.wikipedia.org/wiki/AArch64)
 [![Arch: ARM32](https://img.shields.io/badge/Arch-ARM32%20(v7)-yellow.svg)](https://en.wikipedia.org/wiki/ARM_architecture_family#AArch32)
