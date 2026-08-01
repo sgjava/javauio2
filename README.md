@@ -1,5 +1,3 @@
-# Java UIO 2 (FFM)
-
 ![Title](images/title.png)
 
 [![JDK 25 LTS](https://img.shields.io/badge/JDK-25_LTS-orange.svg)](https://openjdk.java.net/projects/jdk/25/)
