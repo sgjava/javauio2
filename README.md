@@ -69,15 +69,27 @@ This repository contains more than just a library; it includes exhaustive demos 
 * **Game Logic:** Atari-style Centipede clones showcasing memory-efficient movement controllers.
 * **Native Demos:** Direct ports of JNI demos to the modern FFM era.
 
+---
+
+## 🏗️ Building Custom ARM32 JDK 25 with FFM
+
+For target ARM32 boards (such as NanoPi or Raspberry Pi running 32-bit environments), Java 25 requires a custom JDK build with Foreign Function & Memory (FFM) API support and proper layout handling.
+
+1. Run the custom JDK build script located in `~/javauio2/scripts/jdk25-arm32.sh` **before** executing `install-java.sh`.
+2. Ensure the resulting `openjdk-25-jdk_arm32-server-release-neon.tar.gz` archive is present in your home directory (`~/`) prior to running the installer.
+
+---
+
 ### Download and Build
 ```bash
 # Download project
 sudo apt install git
 cd ~/
-git clone --depth 1 https://github.com/sgjava/javauio2.git
+git clone --depth 1 [https://github.com/sgoldsmith/javauio2.git](https://github.com/sgoldsmith/javauio2.git)
 
 # Setup and Install
 cd ~/javauio2/scripts
+./jdk25-arm32.sh # ARM32 only (ensure tar.gz is in ~)
 ./install-java.sh
 ./setup-permissions.sh # ARM only
 sudo reboot
