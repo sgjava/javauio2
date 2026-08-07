@@ -8,6 +8,7 @@
 # 2. Injects Bridge functions for Java FFM.
 # 3. SDL2 enabled ONLY for x86_64 (Testing).
 # 4. Pure Periphery for ARM (Hardware).
+# 5. Applies precise ARM32 ILP32 `C_LONG` layout patch.
 #
 # Steven P. Goldsmith
 # sgjava@gmail.com
@@ -28,18 +29,20 @@ U8G2_REPO_DIR="$WORK_DIR/u8g2_repo"
 GEN_DIR="$MODULE_ROOT/target/generated-sources/jextract"
 NATIVE_SRC_DIR="$MODULE_ROOT/src/main/native"
 
-# THE FIX: Place directly in target/classes so Maven Assembly finds it
+# Place directly in target/classes so Maven Assembly finds it
 RES_DIR="$MODULE_ROOT/target/classes/native"
 
-# Explicitly target stable LLVM version (e.g., LLVM 18)
-LLVM_PATH="/usr/lib/llvm-18/lib"
-if [ ! -d "$LLVM_PATH" ]; then
-    # Fallback: grab highest version up to 19 if 18 isn't found
-    LLVM_PATH=$(ls -d /usr/lib/llvm-{18,19,17,16,15} 2>/dev/null | sort -V | tail -n 1)/lib
+# Lock to LLVM 19 path explicitly to match system toolchain
+if [ -d "/usr/lib/llvm-19/lib" ]; then
+    LLVM_PATH="/usr/lib/llvm-19/lib"
+else
+    LLVM_PATH="/usr/lib/x86_64-linux-gnu"
 fi
-export LD_LIBRARY_PATH=$LLVM_PATH
+export LD_LIBRARY_PATH="$LLVM_PATH:/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+export JAVA_LIBRARY_PATH="$LLVM_PATH"
 
-echo "--- Architecture: $ARCH ---"
+echo "--- Architecture:    $ARCH ---"
+echo "--- Using LLVM Path: $LLVM_PATH ---"
 
 # --- Setup Work Directory ---
 mkdir -p "$WORK_DIR"
@@ -71,11 +74,20 @@ cd "$FLAT_DIR"
 
 # --- Toolchain Selection ---
 mkdir -p gnu
+JEXTRACT_SYS_INCLUDES=""
+FLAGS_FILE="$WORK_DIR/compile_flags.txt"
+
 case $ARCH in
     arm64)
         ln -sf /usr/aarch64-linux-gnu/include/gnu/stubs-lp64.h gnu/stubs-soft.h
         export CC="aarch64-linux-gnu-gcc"
         JEXT_INC="-I. -I/usr/aarch64-linux-gnu/include"
+        JEXTRACT_SYS_INCLUDES="-I /usr/aarch64-linux-gnu/include"
+        export JAVA_TOOL_OPTIONS="-Djextract.target.arch=aarch64"
+        cat <<EOF > "$FLAGS_FILE"
+--target=aarch64-linux-gnu
+-I/usr/aarch64-linux-gnu/include
+EOF
         rm -f u8x8_d_sdl_128x64.c u8x8_sdl_key.c 
         SDL_LIBS=""
         SDL_FLAGS=""
@@ -84,6 +96,13 @@ case $ARCH in
         ln -sf /usr/arm-linux-gnueabihf/include/gnu/stubs-hard.h gnu/stubs-soft.h
         export CC="arm-linux-gnueabihf-gcc"
         JEXT_INC="-I. -I/usr/arm-linux-gnueabihf/include"
+        JEXTRACT_SYS_INCLUDES="-I /usr/arm-linux-gnueabihf/include"
+        export JAVA_TOOL_OPTIONS="-Djextract.target.arch=arm"
+        cat <<EOF > "$FLAGS_FILE"
+--target=arm-linux-gnueabihf
+-m32
+-I/usr/arm-linux-gnueabihf/include
+EOF
         rm -f u8x8_d_sdl_128x64.c u8x8_sdl_key.c 
         SDL_LIBS=""
         SDL_FLAGS=""
@@ -91,6 +110,9 @@ case $ARCH in
     *)
         export CC="gcc"
         JEXT_INC="-I."
+        rm -f "$FLAGS_FILE"
+        touch "$FLAGS_FILE"
+        unset JAVA_TOOL_OPTIONS
         SDL_CFLAGS=$(pkg-config --cflags sdl2)
         SDL_LIBS=$(pkg-config --libs sdl2)
         SDL_FLAGS="-DUSE_SDL $SDL_CFLAGS"
@@ -106,21 +128,38 @@ echo "Linking..."
 $CC -shared -rdynamic -Wl,--no-as-needed -o libu8g2.so *.o $SDL_LIBS > /dev/null 2>&1
 
 # --- Deploy to Target ---
-# We create the directory in target/classes so it is picked up by the 
-# jar and assembly (jar-with-dependencies) goals.
 mkdir -p "$RES_DIR"
 cp "libu8g2.so" "$RES_DIR/"
 
 echo "Running jextract..."
-# Suppress noisy skipping warnings
-jextract --header-class-name U8g2 $JEXT_INC $COMMON_DEFS --dump-includes "$WORK_DIR/includes.txt" helper.h 2>/dev/null
+jextract --header-class-name U8g2 \
+         -I . \
+         $JEXTRACT_SYS_INCLUDES \
+         $COMMON_DEFS \
+         --dump-includes "$WORK_DIR/includes.txt" helper.h 2>/dev/null
+
 grep "u8g2_flat/" "$WORK_DIR/includes.txt" | grep -v "unnamed" > "$WORK_DIR/filtered.txt"
 
+cd "$WORK_DIR"
 jextract --output "$GEN_DIR" \
          --target-package org.u8g2 \
          --header-class-name U8g2 \
-         $JEXT_INC $COMMON_DEFS \
-         "@$WORK_DIR/filtered.txt" helper.h 2>/dev/null
+         -I "$FLAT_DIR" \
+         $JEXTRACT_SYS_INCLUDES \
+         $COMMON_DEFS \
+         "@filtered.txt" "$FLAT_DIR/helper.h" 2>/dev/null
+
+# --------------------------------------------------
+# ARM32 Post-Processing Patches
+# --------------------------------------------------
+if [ "$ARCH" = "arm32" ]; then
+    echo "Applying ARM32 C_LONG layout patch to generated U8g2 sources..."
+    SHARED_JAVA=$(find "$GEN_DIR" -name "U8g2\$shared.java" -o -name "*shared*.java" | head -n 1)
+    if [ -f "$SHARED_JAVA" ]; then
+        echo "  -> Patching C_LONG layout cast in $SHARED_JAVA"
+        sed -i 's/public static final ValueLayout\.OfLong C_LONG = (ValueLayout\.OfLong)/public static final ValueLayout\.OfInt C_LONG = (ValueLayout\.OfInt)/g' "$SHARED_JAVA"
+    fi
+fi
 
 echo "----------------------------------------------------"
 echo "Build Successful for $ARCH."
