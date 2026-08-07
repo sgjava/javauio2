@@ -154,7 +154,7 @@ public final class SpiBus extends AbstractDevice {
         lock.lock();
         try (final var local = Arena.ofConfined()) {
             final var strBuf = local.allocate(256);
-            Periphery.spi_tostring(getHandle(), strBuf, strBuf.byteSize());
+            Periphery.spi_tostring(getHandle(), strBuf, (int) strBuf.byteSize());
             return strBuf.getString(0);
         } finally {
             lock.unlock();

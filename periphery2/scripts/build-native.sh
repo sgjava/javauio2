@@ -7,6 +7,7 @@
 # 1. Compiles c-periphery for target ARCH with CDEV support.
 # 2. Uses QEMU to probe handle sizes and exports them to shell.
 # 3. Generates hardware-accurate Java FFM bindings including all functions.
+# 4. Applies precise ARM32 ILP32 `C_LONG` layout patch to target bindings.
 #
 # Steven P. Goldsmith
 # sgjava@gmail.com
@@ -24,15 +25,18 @@ WORK_ARTIFACTS="$WORK_DIR/build-artifacts/$ARCH"
 GEN_DIR="$MODULE_ROOT/target/generated-sources/jextract"
 RES_DIR="$MODULE_ROOT/target/classes/native"
 
-# Explicitly target stable LLVM version (e.g., LLVM 18)
-LLVM_PATH="/usr/lib/llvm-18/lib"
-if [ ! -d "$LLVM_PATH" ]; then
-    # Fallback: grab highest version up to 19 if 18 isn't found
-    LLVM_PATH=$(ls -d /usr/lib/llvm-{18,19,17,16,15} 2>/dev/null | sort -V | tail -n 1)/lib
+# Lock to LLVM 19 path explicitly
+if [ -d "/usr/lib/llvm-19/lib" ]; then
+    LLVM_PATH="/usr/lib/llvm-19/lib"
+else
+    LLVM_PATH="/usr/lib/x86_64-linux-gnu"
 fi
-export LD_LIBRARY_PATH=$LLVM_PATH
+
+export LD_LIBRARY_PATH="$LLVM_PATH:/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+export JAVA_LIBRARY_PATH="$LLVM_PATH"
 
 echo "--- Architecture:    $ARCH ---"
+echo "--- Using LLVM Path: $LLVM_PATH ---"
 
 # --------------------------------------------------
 # STEP 1: Build Native C-Periphery
@@ -60,8 +64,6 @@ case $ARCH in
         ;;
 esac
 
-# 1. We removed CMAKE_C_FLAGS redefinition to stop "redefined" warnings
-# 2. Added -DBUILD_TESTS=OFF to stop the fgets warnings
 cmake -DBUILD_SHARED_LIBS=ON -DBUILD_TESTS=OFF $CMAKE_OPTS .. > /dev/null
 make -j$(nproc) > /dev/null
 
@@ -134,6 +136,7 @@ echo "Discovered Sizes: GPIO=$GPIO_SIZE, I2C=$I2C_SIZE, LED=$LED_SIZE"
 WRAPPER="$WORK_ARTIFACTS/wrapper.h"
 INCLUDES="$WORK_ARTIFACTS/includes.txt"
 FILTERED="$WORK_ARTIFACTS/filtered_includes.txt"
+FLAGS_FILE="$WORK_ARTIFACTS/compile_flags.txt"
 
 cat <<EOF > "$WRAPPER"
 #include <stdbool.h>
@@ -150,7 +153,42 @@ EOF
 
 ls "$C_SRC_DIR/src/"*.h | grep -v "_internal.h" | sed 's|.*|#include "&"|' >> "$WRAPPER"
 
-jextract --header-class-name Periphery -I "$C_SRC_DIR/src" --dump-includes "$INCLUDES" "$WRAPPER" 2>/dev/null
+# Setup compile_flags.txt for LibClang AND JAVA_TOOL_OPTIONS for jextract JVM layout generator
+JEXTRACT_SYS_INCLUDES=""
+
+case $ARCH in
+    arm64)
+        cat <<EOF > "$FLAGS_FILE"
+--target=aarch64-linux-gnu
+-I/usr/aarch64-linux-gnu/include
+EOF
+        JEXTRACT_SYS_INCLUDES="-I /usr/aarch64-linux-gnu/include"
+        export JAVA_TOOL_OPTIONS="-Djextract.target.arch=aarch64"
+        ;;
+    arm32)
+        cat <<EOF > "$FLAGS_FILE"
+--target=arm-linux-gnueabihf
+-m32
+-I/usr/arm-linux-gnueabihf/include
+EOF
+        JEXTRACT_SYS_INCLUDES="-I /usr/arm-linux-gnueabihf/include"
+        export JAVA_TOOL_OPTIONS="-Djextract.target.arch=arm"
+        ;;
+    *)
+        rm -f "$FLAGS_FILE"
+        touch "$FLAGS_FILE"
+        unset JAVA_TOOL_OPTIONS
+        ;;
+esac
+
+# Execute jextract from the directory containing compile_flags.txt
+cd "$WORK_ARTIFACTS"
+
+jextract --header-class-name Periphery \
+         -I "$C_SRC_DIR/src" \
+         $JEXTRACT_SYS_INCLUDES \
+         --dump-includes "$INCLUDES" "$WRAPPER"
+
 grep "c-periphery/src/" "$INCLUDES" | grep -v "_ops" | grep -v "unnamed" > "$FILTERED"
 
 jextract --output "$GEN_DIR" \
@@ -166,7 +204,22 @@ jextract --output "$GEN_DIR" \
          --include-struct spi_handle \
          --include-struct periphery_version \
          -I "$C_SRC_DIR/src" \
-         "@$FILTERED" "$WRAPPER" 2>/dev/null
+         $JEXTRACT_SYS_INCLUDES \
+         "@$FILTERED" "$WRAPPER"
+
+# --------------------------------------------------
+# STEP 4: ARM32 Post-Processing Patches
+# --------------------------------------------------
+if [ "$ARCH" = "arm32" ]; then
+    echo "Applying ARM32 C_LONG layout patch to generated sources..."
+
+    # 1. Patch C_LONG canonical layout cast in Periphery$shared.java precisely
+    SHARED_JAVA=$(find "$GEN_DIR" -name "Periphery\$shared.java" -o -name "*shared*.java" | head -n 1)
+    if [ -f "$SHARED_JAVA" ]; then
+        echo "  -> Patching C_LONG layout cast in $SHARED_JAVA"
+        sed -i 's/public static final ValueLayout\.OfLong C_LONG = (ValueLayout\.OfLong)/public static final ValueLayout\.OfInt C_LONG = (ValueLayout\.OfInt)/g' "$SHARED_JAVA"
+    fi
+fi
 
 touch "$GEN_DIR/.arch_$ARCH"
 echo "Build Successful for $ARCH."

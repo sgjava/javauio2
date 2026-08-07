@@ -57,7 +57,7 @@ In raw performance testing on the Pine A64 (Cortex-A53), the FFM implementation 
 
 | Architecture | JNI (Java UIO) | **FFM (Java UIO 2)** |
 | :--- | :---: | :---: |
-| **ARM32 (v7)** | ✅ Supported | ⏳ Pending Linker |
+| **ARM32 (v7)** | ✅ Supported | **Recommended** |
 | **ARM64 (v8)** | ✅ Supported | ✅ **Recommended** |
 | **X86_64** | ✅ Supported | ✅ **Recommended** |
 

@@ -183,7 +183,7 @@ public class SysLed extends AbstractDevice {
     public String getName() {
         lock.lock();
         try {
-            if (Periphery.led_name(getHandle(), nameBuffer, nameBuffer.byteSize()) < 0) {
+            if (Periphery.led_name(getHandle(), nameBuffer, (int) nameBuffer.byteSize()) < 0) {
                 final var error = Periphery.led_errmsg(getHandle()).getString(0);
                 throw new RuntimeException("Failed to get LED name: %s".formatted(error));
             }
@@ -197,7 +197,7 @@ public class SysLed extends AbstractDevice {
     public String toString() {
         lock.lock();
         try {
-            Periphery.led_tostring(getHandle(), toStringBuffer, toStringBuffer.byteSize());
+            Periphery.led_tostring(getHandle(), toStringBuffer, (int) toStringBuffer.byteSize());
             return toStringBuffer.getString(0);
         } finally {
             lock.unlock();

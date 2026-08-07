@@ -87,20 +87,20 @@ public class Perf implements Callable<Integer> {
         var dataOutOffOffset = pin.dataOutOff().offset().longValue();
         if (!value) {
             // Get current register value
-            Periphery.mmio_read32(pin.mmioHandle(), dataOutOffOffset, reg);
+            Periphery.mmio_read32(pin.mmioHandle(), (int) dataOutOffOffset, reg);
             var currentVal = reg.get(ValueLayout.JAVA_INT, 0);
             // If on and off registers are the same use AND
             if (dataOutOffOffset == dataOutOnOffset) {
-                Periphery.mmio_write32(pin.mmioHandle(), dataOutOffOffset, currentVal & pin.dataOutOff().mask());
+                Periphery.mmio_write32(pin.mmioHandle(), (int) dataOutOffOffset, currentVal & pin.dataOutOff().mask());
             } else {
                 // If on and off registers are different use OR like Raspberry Pi
-                Periphery.mmio_write32(pin.mmioHandle(), dataOutOffOffset, currentVal | pin.dataOutOff().mask());
+                Periphery.mmio_write32(pin.mmioHandle(), (int) dataOutOffOffset, currentVal | pin.dataOutOff().mask());
             }
         } else {
             // Get current register value
-            Periphery.mmio_read32(pin.mmioHandle(), dataOutOnOffset, reg);
+            Periphery.mmio_read32(pin.mmioHandle(), (int) dataOutOnOffset, reg);
             var currentVal = reg.get(ValueLayout.JAVA_INT, 0);
-            Periphery.mmio_write32(pin.mmioHandle(), dataOutOnOffset, currentVal | pin.dataOutOn().mask());
+            Periphery.mmio_write32(pin.mmioHandle(), (int) dataOutOnOffset, currentVal | pin.dataOutOn().mask());
         }
     }
 
@@ -182,10 +182,10 @@ public class Perf implements Callable<Integer> {
                 var dataOutOffOffset = pin.dataOutOff().offset().longValue();
 
                 // Only do read one time to get current value
-                Periphery.mmio_read32(handle, dataOutOnOffset, valBuf);
+                Periphery.mmio_read32(handle, (int) dataOutOnOffset, valBuf);
                 var regOnVal = valBuf.get(ValueLayout.JAVA_INT, 0);
 
-                Periphery.mmio_read32(handle, dataOutOffOffset, valBuf);
+                Periphery.mmio_read32(handle, (int) dataOutOffOffset, valBuf);
                 var regOffVal = valBuf.get(ValueLayout.JAVA_INT, 0);
 
                 log.info("Running best MMIO write test with {} samples", samples);
@@ -195,15 +195,15 @@ public class Perf implements Callable<Integer> {
                     var on = regOffVal | pin.dataOutOn().mask();
                     var off = regOffVal & (pin.dataOutOff().mask());
                     for (var i = 0; i < samples; i++) {
-                        Periphery.mmio_write32(handle, dataOutOnOffset, on);
-                        Periphery.mmio_write32(handle, dataOutOffOffset, off);
+                        Periphery.mmio_write32(handle, (int) dataOutOnOffset, on);
+                        Periphery.mmio_write32(handle, (int) dataOutOffOffset, off);
                     }
                 } else {
                     var on = regOnVal | pin.dataOutOn().mask();
                     var off = regOnVal | pin.dataOutOff().mask();
                     for (var i = 0; i < samples; i++) {
-                        Periphery.mmio_write32(handle, dataOutOnOffset, on);
-                        Periphery.mmio_write32(handle, dataOutOffOffset, off);
+                        Periphery.mmio_write32(handle, (int) dataOutOnOffset, on);
+                        Periphery.mmio_write32(handle, (int) dataOutOffOffset, off);
                     }
                 }
                 var finish = Instant.now();
@@ -234,7 +234,7 @@ public class Perf implements Callable<Integer> {
                 // Open MMIO for each chip
                 for (var i = 0; i < file.chips().size(); i++) {
                     var handle = arena.allocate(mmio_handle.layout());
-                    if (Periphery.mmio_open(handle, file.chips().get(i), file.mmioSize().get(i)) >= 0) {
+                    if (Periphery.mmio_open(handle, file.chips().get(i).intValue(), file.mmioSize().get(i).intValue()) >= 0) {
                         mmioHandles.put(file.gpioDev().get(i), handle);
                     } else {
                         log.error("Failed to open MMIO for chip 0x{}", Long.toHexString(file.chips().get(i)));

@@ -203,7 +203,7 @@ public final class Uart extends AbstractDevice {
     public String toString() {
         lock.lock();
         try {
-            Periphery.serial_tostring(getHandle(), toStringBuffer, toStringBuffer.byteSize());
+            Periphery.serial_tostring(getHandle(), toStringBuffer, (int) toStringBuffer.byteSize());
             return toStringBuffer.getString(0);
         } finally {
             lock.unlock();

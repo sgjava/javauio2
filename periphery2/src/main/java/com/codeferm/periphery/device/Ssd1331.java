@@ -269,7 +269,7 @@ public class Ssd1331 extends AbstractDevice {
     public final void writeData(final MemorySegment segment) {
         if (getHandle().address() != 0 && getArena().scope().isAlive()) {
             Periphery.gpio_write(dcHandle, true);
-            if (Periphery.spi_transfer(getHandle(), segment, segment, segment.byteSize()) < 0) {
+            if (Periphery.spi_transfer(getHandle(), segment, segment, (int) segment.byteSize()) < 0) {
                 throw new RuntimeException("SPI Data Segment transfer failed");
             }
         }

@@ -132,7 +132,7 @@ public final class I2cBus extends AbstractDevice {
         lock.lock();
         try (final var local = Arena.ofConfined()) {
             final var strBuf = local.allocate(256);
-            Periphery.i2c_tostring(getHandle(), strBuf, strBuf.byteSize());
+            Periphery.i2c_tostring(getHandle(), strBuf, (int) strBuf.byteSize());
             return strBuf.getString(0);
         } finally {
             lock.unlock();

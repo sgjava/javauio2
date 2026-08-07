@@ -73,7 +73,7 @@ public class MemScan implements Callable<Integer> {
         var list = new ArrayList<Integer>();
         var valueBuffer = arena.allocate(ValueLayout.JAVA_INT);
         for (long i = 0; i < words; i++) {
-            if (Periphery.mmio_read32(mmioHandle, i * 4, valueBuffer) < 0) {
+            if (Periphery.mmio_read32(mmioHandle, (int) i * 4, valueBuffer) < 0) {
                 log.error("MMIO read failed at offset 0x{:08x}", i * 4);
                 list.add(0);
             } else {
@@ -202,7 +202,7 @@ public class MemScan implements Callable<Integer> {
         log.atDebug().log(String.format("Memory address 0x%08x words 0x%08x", address, words));
         try (var arena = Arena.ofConfined()) {
             var handle = arena.allocate(mmio_handle.layout());
-            if (Periphery.mmio_open(handle, address, words * 4) >= 0) {
+            if (Periphery.mmio_open(handle, (int) address, (int) words * 4) >= 0) {
                 try {
                     detectMode(arena, handle);
                     detectData(arena, handle);

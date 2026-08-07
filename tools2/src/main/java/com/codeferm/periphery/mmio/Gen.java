@@ -66,7 +66,7 @@ public class Gen implements Callable<Integer> {
         for (var i = 0; i < groupChip.size(); i++) {
             var chipIdx = groupChip.get(i);
             var offset = dataOffset.get(i).longValue();
-            if (Periphery.mmio_read32(mmioHandle.get(chipIdx), offset, valueBuffer) < 0) {
+            if (Periphery.mmio_read32(mmioHandle.get(chipIdx), (int) offset, valueBuffer) < 0) {
                 log.error("MMIO read failed at offset {}", offset);
                 list.add(0);
             } else {
@@ -195,7 +195,7 @@ public class Gen implements Callable<Integer> {
                 for (var i = 0; i < file.chips().size(); i++) {
                     var handle = arena.allocate(mmio_handle.layout());
                     // Signature: mmio_open(MemorySegment, long base, long size)
-                    if (Periphery.mmio_open(handle, file.chips().get(i), file.mmioSize().get(i)) < 0) {
+                    if (Periphery.mmio_open(handle, file.chips().get(i).intValue(), file.mmioSize().get(i).intValue()) < 0) {
                         log.error("Failed to open MMIO for chip 0x{}", Long.toHexString(file.chips().get(i)));
                         return 1;
                     }
