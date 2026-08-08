@@ -71,6 +71,13 @@ This repository contains more than just a library; it includes exhaustive demos 
 
 ---
 
+## ARM32 Support & Modern FFM (Back to the Future)
+
+While modern JDK releases on ARM32 face architectural performance constraints (such as restricted register counts and limited 64-bit
+JIT optimizations), this project bridges the gap by bringing Project Panama's Foreign Function & Memory (FFM) API to 32-bit ARM
+hardware. By leveraging FFM bindings over legacy JNI, developers can efficiently interface with native libraries like `c-periphery`
+on older hardware, keeping legacy platforms viable and performant.
+
 ## 🏗️ Building Custom ARM32 JDK 25 with FFM
 
 For target ARM32 boards (such as NanoPi or Raspberry Pi running 32-bit environments), Java 25 requires a custom JDK build with Foreign Function & Memory (FFM) API support and proper layout handling.
