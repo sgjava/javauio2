@@ -19,8 +19,8 @@ JDK_SRC_DIR="$BUILD_DIR/jdk25u"
 DIST_DIR="$BUILD_DIR/dist"
 TARGET_ARCH="arm-linux-gnueabihf"
 
-# Compiler flags targeting Cortex-A7 with NEON + VFPv4 hard-float
-CFLAGS_PROD="-O3 -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard"
+# Enhanced flags for maximum ARMv7-A / Cortex-A7 throughput
+CFLAGS_PROD="-O3 -mtune=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -ftree-vectorize -fomit-frame-pointer -pipe"
 
 echo "================================================================="
 echo " Building Production OpenJDK 25 (arm32 / armhf + NEON)"
@@ -143,6 +143,7 @@ bash configure \
     --enable-fallback-linker \
     --enable-headless-only \
     --with-jvm-variants=server \
+    --with-jvm-features=link-time-opt \
     --with-copyright-year=2026 \
     --with-source-date=current \
     --with-extra-cflags="$CFLAGS_PROD" \
