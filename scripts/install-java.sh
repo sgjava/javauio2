@@ -49,19 +49,21 @@ echo "--------------------------------------------------"
 case $ARCH in
     armv7l|armv8l|armhf|armv6l)
         JDK_DIR="$SDKMAN_DIR/candidates/java/25-arm32-local"
+        CURRENT_LINK="$SDKMAN_DIR/candidates/java/current"
         if [ ! -d "$JDK_DIR" ]; then
             echo "Installing Custom ARM32 JDK 25 from local archive..."
             LOCAL_TAR="$HOME/openjdk-25-jdk_arm32-server-release-neon.tar.gz"
             if [ -f "$LOCAL_TAR" ]; then
                 mkdir -p "$JDK_DIR"
                 tar -xzf "$LOCAL_TAR" -C "$JDK_DIR" --strip-components=1
-                sdk install java 25-arm32-local "$JDK_DIR"
             else
                 echo "Error: $LOCAL_TAR not found. Please build it locally first using the jdk-arm32.sh script."
                 exit 1
             fi
         fi
-        sdk default java 25-arm32-local
+        rm -f "$CURRENT_LINK"
+        ln -s "$JDK_DIR" "$CURRENT_LINK"
+        echo "Default java version set to 25-arm32-local via symbolic link."
         ;;
     *)
         sdk install java 25-zulu || true
@@ -120,9 +122,9 @@ EOF
                         libsdl2-dev:amd64 libsdl2-dev:arm64 libsdl2-dev:armhf
 fi
 
-echo "--------------------------------------------------"
-echo "STEP 5: Build Native jextract (LLVM 19)"
-echo "--------------------------------------------------"
+# -----------------------------------------------------------------------------
+# STEP 5: Build Native jextract (LLVM 19)
+# -----------------------------------------------------------------------------
 if [ ! -d "$JEXTRACT_SRC" ]; then
     git clone https://github.com/openjdk/jextract.git "$JEXTRACT_SRC"
 else
@@ -152,7 +154,12 @@ if [ -n "$ACTUAL_CLANG_SO" ]; then
     sudo ln -sf "$ACTUAL_CLANG_SO" "$LLVM_LIB_PATH/libclang.so.1"
 fi
 
-REAL_JAVA_HOME=$(readlink -f "$SDKMAN_DIR/candidates/java/current")
+# Ensure JAVA_HOME and PATH are explicitly available for Gradle
+export JAVA_HOME="$SDKMAN_DIR/candidates/java/current"
+export PATH="$JAVA_HOME/bin:$PATH"
+REAL_JAVA_HOME=$(readlink -f "$JAVA_HOME")
+
+echo "Using JAVA_HOME for jextract build: $REAL_JAVA_HOME"
 
 rm -rf build/
 gradle -Dorg.gradle.java.home="$REAL_JAVA_HOME" \
