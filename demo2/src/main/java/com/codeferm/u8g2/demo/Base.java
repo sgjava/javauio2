@@ -14,6 +14,7 @@ import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.u8g2.U8g2;
@@ -145,6 +146,11 @@ public abstract class Base implements Callable<Integer> {
     @CommandLine.Option(names = {"--sleep"}, description
             = " Milliseconds to sleep for text and graphics, ${DEFAULT-VALUE} by default.")
     private long sleep = 5000;
+
+    /**
+     * Guard to prevent concurrent/duplicate execution between shutdown hooks and main loops.
+     */
+    private final AtomicBoolean closed = new AtomicBoolean(false);
 
     /**
      * Display width.
@@ -286,28 +292,30 @@ public abstract class Base implements Callable<Integer> {
      * @param arena The parent unmanaged memory allocator context.
      */
     private void executeTeardown(final MemorySegment u8g2, final Arena arena) {
-        if (arena.scope().isAlive() && u8g2 != null && u8g2.address() != 0) {
-            log.atDebug().log("Executing hardware clean up and display power sequence...");
-            try {
-                U8g2.u8g2_ClearBuffer(u8g2);
-                U8g2.u8g2_SendBuffer(u8g2);
-                U8g2.u8g2_SetPowerSave_Java(u8g2, (byte) 1);
+        if (closed.compareAndSet(false, true)) {
+            if (arena.scope().isAlive() && u8g2 != null && u8g2.address() != 0) {
+                log.atDebug().log("Executing hardware clean up and display power sequence...");
+                try {
+                    U8g2.u8g2_ClearBuffer(u8g2);
+                    U8g2.u8g2_SendBuffer(u8g2);
+                    U8g2.u8g2_SetPowerSave_Java(u8g2, (byte) 1);
 
-                switch (type) {
-                    case I2CHW, I2CSW -> {
-                        U8g2.done_i2c.makeInvoker().handle().invokeExact();
+                    switch (type) {
+                        case I2CHW, I2CSW -> {
+                            U8g2.done_i2c.makeInvoker().handle().invokeExact();
+                        }
+                        case SPIHW, SPISW -> {
+                            U8g2.done_spi.makeInvoker().handle().invokeExact();
+                        }
+                        default -> {
+                            // SDL simulator requires no additional low-level kernel close mapping out calls
+                        }
                     }
-                    case SPIHW, SPISW -> {
-                        U8g2.done_spi.makeInvoker().handle().invokeExact();
-                    }
-                    default -> {
-                        // SDL simulator requires no additional low-level kernel close mapping out calls
-                    }
+                } catch (final Throwable t) {
+                    System.err.printf("Failed to safely shut down hardware bus infrastructure: %s%n", t.getMessage());
                 }
-            } catch (final Throwable t) {
-                System.err.printf("Failed to safely shut down hardware bus infrastructure: %s%n", t.getMessage());
+                U8g2.done_user_data(u8g2);
             }
-            U8g2.done_user_data(u8g2);
         }
     }
 }
