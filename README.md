@@ -26,8 +26,9 @@ This project adheres to rigorous development standards to ensure production-grad
 | :--- | :--- | :--- | :--- |
 | **Model** | **Provider-Centric.** Relies on a plugin architecture to map hardware. | **Device-Centric.** Uses a "Factory" abstraction to wrap pins in objects. | **Kernel-Direct.** Treats the Linux Kernel ABI as the only provider. |
 | **FFM Integration** | **Plugin Level.** FFM is an optional provider module. | **JNI Core.** Primarily utilizes JNI/JNA for native access. | **Native FFM.** Built specifically for Project Panama as the core engine. |
-| **Board Support** | Board-specific definitions/configs often required. | Broad, but requires factory logic for each SoC. | **Universal.** If it runs a standard Linux kernel, it works instantly. |
-| **Graphics** | Community-ported Java drivers. | High-level/basic shape support. | **Deep u8g2 Binding.** Full C-performance for **SSD1331** OLEDs. |
+| **32-Bit / Legacy ARM** | **Dropped.** No longer supports arm32 (Pi4J v3+ targets 64-bit architectures). | **Stagnant / Legacy.** Works on older 32-bit targets, but library development has slowed significantly. | **Universal 32/64-bit.** Runs natively across modern 64-bit and legacy 32-bit Linux kernels without distinction. |
+| **Board Support** | Board-specific definitions/configs often required. | Broad, but requires factory logic or native maps for each SoC. | **Universal.** If it runs a standard Linux kernel, it works instantly. |
+| **Graphics** | Community-ported Java drivers. | High-level/basic shape support. | **Deep u8g2 Binding** for nearly 200 displays. Full C-performance for **SSD1331** OLEDs. |
 | **Portability** | Heavyweight (Core + Provider + Config). | Lightweight core, but SoC-specific factories. | **Ultra-Lightweight.** Zero-dependency bridge to Linux interfaces. |
 
 ### 1. Universal Kernel-Standardized I/O
