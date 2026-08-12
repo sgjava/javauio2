@@ -118,7 +118,7 @@ public final class U8g2Factory {
      * @param gpio The GPIO chip number.
      * @param scl The SCL pin number.
      * @param sda The SDA pin number.
-     * @param res The RESET pin number.
+     * @param res The RESET pin number. Set to 255.
      * @param delay Nanosecond delay or 0 for none.
      */
     public static void initSwI2c(final MemorySegment u8g2, final String setup, final int rotation, final int gpio, final int scl,
@@ -143,12 +143,12 @@ public final class U8g2Factory {
      * @param bus The SPI bus number.
      * @param dc The Data/Command pin number.
      * @param res The RESET pin number.
-     * @param cs The Chip Select pin number.
+     * @param cs The Chip Select pin number. Set to 255.
      * @param spiMode The SPI mode (0-3).
      * @param maxSpeed The maximum SPI speed in Hz.
      */
     public static void initHwSpi(final MemorySegment u8g2, final String setup, final int rotation, final int gpio, final int bus,
-            final int dc, final int res, final int cs, final short spiMode, final int maxSpeed) {
+            final int dc, final int res, final int cs, final int spiMode, final int maxSpeed) {
         invokeSetup(u8g2, setup, rotation, "u8x8_byte_arm_linux_hw_spi");
         U8g2.init_spi_hw_advanced(u8g2, (byte) gpio, (byte) bus, (byte) dc, (byte) res, (byte) cs, spiMode, maxSpeed);
         log.atDebug().log(String.format("Size %d x %d, draw color %d",

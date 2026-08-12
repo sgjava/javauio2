@@ -29,7 +29,9 @@ showText(u8g2, "Welcome to Java 25 FFM!");
 
 
 Check out all the [demos](https://github.com/sgjava/javauio/tree/main/demo/src/main/java/com/codeferm/u8g2/demo).
-You will find quite a sophisticated selection. 
+You will find quite a sophisticated selection.
+
+When using SPIHW set CS to 255. For I2CSW set RES to 255.
 
 SSD1306 sendBuffer performance based on JDK 25 and Pine A64.
 

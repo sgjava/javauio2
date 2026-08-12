@@ -157,7 +157,7 @@ if [ "$ARCH" = "arm32" ]; then
     SHARED_JAVA=$(find "$GEN_DIR" -name "U8g2\$shared.java" -o -name "*shared*.java" | head -n 1)
     if [ -f "$SHARED_JAVA" ]; then
         echo "  -> Patching C_LONG layout cast in $SHARED_JAVA"
-        sed -i 's/public static final ValueLayout\.OfLong C_LONG = (ValueLayout\.OfLong)/public static final ValueLayout\.OfInt C_LONG = (ValueLayout\.OfInt)/g' "$SHARED_JAVA"
+        sed -i 's/public static final ValueLayout\.OfLong C_LONG =.*/public static final ValueLayout\.OfInt C_LONG = (ValueLayout.OfInt) Linker.nativeLinker().canonicalLayouts().get("long");/g' "$SHARED_JAVA"
     fi
 fi
 
