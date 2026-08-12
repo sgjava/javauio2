@@ -9,8 +9,8 @@ import java.lang.foreign.MemorySegment;
 import java.lang.foreign.SymbolLookup;
 import lombok.extern.slf4j.Slf4j;
 import org.u8g2.U8g2;
-
 import static org.u8g2.U8g2.C_POINTER;
+import static org.u8g2.U8g2.U8X8_PIN_NONE;
 
 /**
  * Universal U8g2 Engine Factory for Foreign Function & Memory (FFM) API.
@@ -118,13 +118,13 @@ public final class U8g2Factory {
      * @param gpio The GPIO chip number.
      * @param scl The SCL pin number.
      * @param sda The SDA pin number.
-     * @param res The RESET pin number. Set to 255.
+     * @param res The RESET pin number is ignored and U8X8_PIN_NONE is used.
      * @param delay Nanosecond delay or 0 for none.
      */
     public static void initSwI2c(final MemorySegment u8g2, final String setup, final int rotation, final int gpio, final int scl,
             final int sda, final int res, final long delay) {
         invokeSetup(u8g2, setup, rotation, "u8x8_byte_arm_linux_sw_i2c");
-        U8g2.init_i2c_sw(u8g2, (byte) gpio, (byte) scl, (byte) sda, (byte) res, delay);
+        U8g2.init_i2c_sw(u8g2, (byte) gpio, (byte) scl, (byte) sda, (byte) U8X8_PIN_NONE(), delay);
         log.atDebug().log(String.format("Size %d x %d, draw color %d",
                 U8g2.u8g2_GetDisplayWidth_Java(u8g2),
                 U8g2.u8g2_GetDisplayHeight_Java(u8g2),
@@ -143,14 +143,14 @@ public final class U8g2Factory {
      * @param bus The SPI bus number.
      * @param dc The Data/Command pin number.
      * @param res The RESET pin number.
-     * @param cs The Chip Select pin number. Set to 255.
+     * @param cs The Chip Select pin number is ignored and U8X8_PIN_NONE is used.
      * @param spiMode The SPI mode (0-3).
      * @param maxSpeed The maximum SPI speed in Hz.
      */
     public static void initHwSpi(final MemorySegment u8g2, final String setup, final int rotation, final int gpio, final int bus,
             final int dc, final int res, final int cs, final int spiMode, final int maxSpeed) {
         invokeSetup(u8g2, setup, rotation, "u8x8_byte_arm_linux_hw_spi");
-        U8g2.init_spi_hw_advanced(u8g2, (byte) gpio, (byte) bus, (byte) dc, (byte) res, (byte) cs, spiMode, maxSpeed);
+        U8g2.init_spi_hw_advanced(u8g2, (byte) gpio, (byte) bus, (byte) dc, (byte) res, (byte) U8X8_PIN_NONE(), spiMode, maxSpeed);
         log.atDebug().log(String.format("Size %d x %d, draw color %d",
                 U8g2.u8g2_GetDisplayWidth_Java(u8g2),
                 U8g2.u8g2_GetDisplayHeight_Java(u8g2),
