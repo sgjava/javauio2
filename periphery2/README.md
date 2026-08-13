@@ -90,17 +90,25 @@ banging to simulate a protocol, so you need extra CPU bandwidth to do that.
 Please note write frequency is based on square wave (rapid on/off). You can
 increase clock speed to improve performance on some boards. I used the OS
 defaults. Speed was validated on an oscilloscope, so Perf test may show better
-performance.
+performance. Buffer write is true bits written, not toggled. 
 
-|SBC               |OS           |CPU Freq|GPIOD Write KHz|MMIO Write KHz|Average CPU|
-| ---------------- | ----------- | ------ | ------------- | ------------ | --------- |
-|Nano Pi Duo v1.0  |Armbian nobel|1.0 GHz |242            |1880          |25%        |
-|Nano Pi M1        |Armbian nobel|1.2 GHz |320            |2355          |25%        |
-|Nano Pi Neo Plus2 |Armbian nobel|1.0 GHz |347            |2356          |25%        |
-|Odroid C2         |Armbian nobel|1.5 GHz |365            |2346          |25%        |
-|Odroid XU4        |Armbian nobel|2.0 GHz | 44            | 300          |12%        |
-|Raspberry Pi 3    |Ubuntu nobel |1.2 GHz |119            |4541          |25%        |
-|Orange Pi PC Plus |Armbian nobel|1.3 GHz |314            | 886          |25%        |
+|SBC               |OS              |CPU Freq|GPIOD Write KHz|Buffer Write KHz|Average CPU|
+| ---------------- | -------------- | ------ | ------------- | -------------- | --------- |
+|Nano Pi Duo v1.0  |Armbian Resolute|1.0 GHz |37             |616             |25%        |
+
+
+## GPIO Performance & Architecture Notes
+
+When performing high-frequency GPIO operations on **ARM32** architectures, you may notice that individual per-operation calls (such as calling `gpio_write()` or `gpio_read()` in a tight loop via Foreign Function & Memory (FFM) or JNI) experience throughput limitations. 
+
+### Why ARM32 GPIO Iteration is Slower
+1. **ABI Transition Overhead & Register Pressure:** ARM32 is a 32-bit architecture with a severely constrained pool of general-purpose registers compared to 64-bit systems. FFM/Panama dynamic downcall adapters must constantly spill and reload registers to conform to complex `arm-linux-gnueabihf` calling conventions.
+2. **The Per-Call Boundary Tax:** Executing iterative hardware operations line-by-line forces a continuous stream of cross-boundary transitions and kernel `ioctl()` system calls (`/dev/gpiochipN` character device context switches). On resource-constrained 32-bit processors, this cumulative latency heavily throttles throughput.
+
+### The Solution: Bulk Native Helpers
+To achieve maximum throughput (scaling into the megahertz range), this project utilizes custom C helper functions (located in `src/main/native/helper.c`). 
+
+Instead of hammering the FFM boundary or the kernel driver per-bit/per-sample from Java, the entire data buffer or batch sequence is passed down in a **single native downcall**. The underlying C code processes the tight loop natively in optimized machine code, completely bypassing cross-boundary overhead and maximizing hardware toggle speed.
 
 ## How GPIO pins are mapped
 This is based on testing on a NanoPi Duo. gpiochip0 starts at 0 and gpiochip1

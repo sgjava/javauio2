@@ -4,9 +4,9 @@
 #
 # @author: sgoldsmith
 #
-# 1. Compiles c-periphery for target ARCH with CDEV support.
+# 1. Compiles c-periphery and custom native helpers for target ARCH with CDEV support.
 # 2. Uses QEMU to probe handle sizes and exports them to shell.
-# 3. Generates hardware-accurate Java FFM bindings including all functions.
+# 3. Generates hardware-accurate Java FFM bindings including all functions and custom helpers.
 # 4. Applies precise ARM32 ILP32 `C_LONG` layout patch to target bindings.
 #
 # Steven P. Goldsmith
@@ -24,6 +24,7 @@ C_SRC_DIR="$WORK_DIR/c-periphery"
 WORK_ARTIFACTS="$WORK_DIR/build-artifacts/$ARCH"
 GEN_DIR="$MODULE_ROOT/target/generated-sources/jextract"
 RES_DIR="$MODULE_ROOT/target/classes/native"
+NATIVE_SRC_DIR="$MODULE_ROOT/src/main/native"
 
 # Lock to LLVM 19 path explicitly
 if [ -d "/usr/lib/llvm-19/lib" ]; then
@@ -39,12 +40,22 @@ echo "--- Architecture:    $ARCH ---"
 echo "--- Using LLVM Path: $LLVM_PATH ---"
 
 # --------------------------------------------------
-# STEP 1: Build Native C-Periphery
+# STEP 1: Build Native C-Periphery & Custom Helpers
 # --------------------------------------------------
 mkdir -p "$WORK_DIR"
 if [ ! -d "$C_SRC_DIR" ]; then
     git clone https://github.com/vsergeev/c-periphery.git "$C_SRC_DIR"
 fi
+
+# Ensure custom native sources exist
+if [ ! -f "$NATIVE_SRC_DIR/helper.c" ] || [ ! -f "$NATIVE_SRC_DIR/helper.h" ]; then
+    echo "ERROR: Native source files (helper.c or helper.h) not found in $NATIVE_SRC_DIR"
+    exit 1
+fi
+
+# Copy custom helper files into c-periphery src tree so CMake compiles them automatically
+cp "$NATIVE_SRC_DIR/helper.c" "$C_SRC_DIR/src/"
+cp "$NATIVE_SRC_DIR/helper.h" "$C_SRC_DIR/src/"
 
 mkdir -p "$C_SRC_DIR/build"
 cd "$C_SRC_DIR/build"
@@ -142,16 +153,18 @@ cat <<EOF > "$WRAPPER"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
-struct gpio_handle   { unsigned char reserved[$GPIO_SIZE]; };
-struct i2c_handle    { unsigned char reserved[$I2C_SIZE]; };
-struct led_handle    { unsigned char reserved[$LED_SIZE]; };
-struct mmio_handle   { unsigned char reserved[$MMIO_SIZE]; };
-struct pwm_handle    { unsigned char reserved[$PWM_SIZE]; };
+struct gpio_handle    { unsigned char reserved[$GPIO_SIZE]; };
+struct i2c_handle     { unsigned char reserved[$I2C_SIZE]; };
+struct led_handle     { unsigned char reserved[$LED_SIZE]; };
+struct mmio_handle    { unsigned char reserved[$MMIO_SIZE]; };
+struct pwm_handle     { unsigned char reserved[$PWM_SIZE]; };
 struct serial_handle { unsigned char reserved[$SERIAL_SIZE]; };
-struct spi_handle    { unsigned char reserved[$SPI_SIZE]; };
+struct spi_handle     { unsigned char reserved[$SPI_SIZE]; };
 EOF
 
 ls "$C_SRC_DIR/src/"*.h | grep -v "_internal.h" | sed 's|.*|#include "&"|' >> "$WRAPPER"
+# Explicitly include custom helper header for jextract binding generation
+echo '#include "helper.h"' >> "$WRAPPER"
 
 # Setup compile_flags.txt for LibClang AND JAVA_TOOL_OPTIONS for jextract JVM layout generator
 JEXTRACT_SYS_INCLUDES=""
@@ -190,6 +203,8 @@ jextract --header-class-name Periphery \
          --dump-includes "$INCLUDES" "$WRAPPER"
 
 grep "c-periphery/src/" "$INCLUDES" | grep -v "_ops" | grep -v "unnamed" > "$FILTERED"
+# Ensure helper functions are included in the filter list
+grep "helper.h" "$INCLUDES" >> "$FILTERED" || true
 
 jextract --output "$GEN_DIR" \
          --target-package org.periphery \
