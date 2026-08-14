@@ -159,6 +159,14 @@ if [ "$ARCH" = "arm32" ]; then
         echo "  -> Patching C_LONG layout cast in $SHARED_JAVA"
         sed -i 's/public static final ValueLayout\.OfLong C_LONG =.*/public static final ValueLayout\.OfInt C_LONG = (ValueLayout.OfInt) Linker.nativeLinker().canonicalLayouts().get("long");/g' "$SHARED_JAVA"
     fi
+
+    # Fix delay parameter mismatch in init_i2c_sw and init_spi_sw generated wrappers for ARM32
+    U8G2_JAVA=$(find "$GEN_DIR" -name "U8g2.java" | head -n 1)
+    if [ -f "$U8G2_JAVA" ]; then
+        echo "  -> Patching init_i2c_sw and init_spi_sw parameter types to int in $U8G2_JAVA"
+        sed -i 's/public static void init_i2c_sw(MemorySegment u8g2, byte gpio_chip, byte scl, byte sda, byte res, long delay)/public static void init_i2c_sw(MemorySegment u8g2, byte gpio_chip, byte scl, byte sda, byte res, int delay)/g' "$U8G2_JAVA"
+        sed -i 's/public static void init_spi_sw(MemorySegment u8g2, byte gpio_chip, byte dc, byte res, byte mosi, byte sck, byte cs, long delay)/public static void init_spi_sw(MemorySegment u8g2, byte gpio_chip, byte dc, byte res, byte mosi, byte sck, byte cs, int delay)/g' "$U8G2_JAVA"
+    fi
 fi
 
 echo "----------------------------------------------------"

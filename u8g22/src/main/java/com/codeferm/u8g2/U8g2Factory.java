@@ -19,7 +19,7 @@ import static org.u8g2.U8g2.U8X8_PIN_NONE;
  *
  * @author Steven P. Goldsmith
  * @version 1.0.0
- * @since  1.0.0
+ * @since 1.0.0
  */
 @Slf4j
 public final class U8g2Factory {
@@ -123,8 +123,8 @@ public final class U8g2Factory {
      */
     public static void initSwI2c(final MemorySegment u8g2, final String setup, final int rotation, final int gpio, final int scl,
             final int sda, final int res, final long delay) {
-        invokeSetup(u8g2, setup, rotation, "u8x8_byte_arm_linux_sw_i2c");
-        U8g2.init_i2c_sw(u8g2, (byte) gpio, (byte) scl, (byte) sda, (byte) U8X8_PIN_NONE(), delay);
+        invokeSetup(u8g2, setup, rotation, "u8x8_byte_sw_i2c");
+        U8g2.init_i2c_sw(u8g2, (byte) gpio, (byte) scl, (byte) sda, (byte) U8X8_PIN_NONE(), (int) delay);
         log.atDebug().log(String.format("Size %d x %d, draw color %d",
                 U8g2.u8g2_GetDisplayWidth_Java(u8g2),
                 U8g2.u8g2_GetDisplayHeight_Java(u8g2),
@@ -176,7 +176,7 @@ public final class U8g2Factory {
     public static void initSwSpi(final MemorySegment u8g2, final String setup, final int rotation, final int gpio, final int dc,
             final int res, final int mosi, final int sck, final int cs, final long delay) {
         invokeSetup(u8g2, setup, rotation, "u8x8_byte_arm_linux_hw_spi");
-        U8g2.init_spi_sw(u8g2, (byte) gpio, (byte) dc, (byte) res, (byte) mosi, (byte) sck, (byte) cs, delay);
+        U8g2.init_spi_sw(u8g2, (byte) gpio, (byte) dc, (byte) res, (byte) mosi, (byte) sck, (byte) cs, (int) delay);
         log.atDebug().log(String.format("Size %d x %d, draw color %d",
                 U8g2.u8g2_GetDisplayWidth_Java(u8g2),
                 U8g2.u8g2_GetDisplayHeight_Java(u8g2),

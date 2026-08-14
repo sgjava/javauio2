@@ -11,6 +11,9 @@
 
 set -e
 
+# Initialize logfile variable to prevent unbound variable errors
+logfile="/tmp/uio-setup.log"
+
 echo "--- Setting up Java UIO 2 Permissions ---"
 
 # 1. Group Setup
