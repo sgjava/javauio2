@@ -94,7 +94,8 @@ performance. Buffer write is true bits written, not toggled.
 
 |SBC               |OS              |CPU Freq|GPIOD Write KHz|Buffer Write KHz|Average CPU|
 | ---------------- | -------------- | ------ | ------------- | -------------- | --------- |
-|Nano Pi Duo v1.0  |Armbian Resolute|1.0 GHz |37             |616             |25%        |
+|Nano Pi Duo v1.0  |Armbian Resolute|1.0 GHz | 37            |616             |25%        |
+|Pine A64 Rev B    |Armbian Resolute|1.1 GHz |200            |426             | 3%        |
 
 
 ## GPIO Performance & Architecture Notes

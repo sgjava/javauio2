@@ -75,7 +75,7 @@ case $ARCH in
         ;;
 esac
 
-cmake -DBUILD_SHARED_LIBS=ON -DBUILD_TESTS=OFF $CMAKE_OPTS .. > /dev/null
+cmake -DBUILD_SHARED_LIBS=ON -DBUILD_TESTS=OFF -DPERIPHERY_GPIO_CDEV_SUPPORT=1 $CMAKE_OPTS .. > /dev/null
 make -j$(nproc) > /dev/null
 
 mkdir -p "$RES_DIR"
