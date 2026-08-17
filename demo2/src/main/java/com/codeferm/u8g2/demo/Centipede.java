@@ -71,9 +71,9 @@ public class Centipede extends Base {
     private volatile boolean running = true;
 
     /**
-     * Object used to synchronize orderly shutdown between the main thread and shutdown hook.
+     * Reference to the main execution thread for thread joining during shutdown.
      */
-    private final Object shutdownLock = new Object();
+    private Thread executionThread;
 
     /**
      * Top boundary constraint of the designated player area.
@@ -629,13 +629,8 @@ public class Centipede extends Base {
      */
     @Override
     protected void run(final MemorySegment u8g2) {
-        final var hook = new Thread(() -> {
-            running = false;
-            synchronized (shutdownLock) {
-                log.debug("Shutdown signal acknowledged by hook thread.");
-            }
-        });
-        Runtime.getRuntime().addShutdownHook(hook);
+        executionThread = Thread.currentThread();
+        log.atInfo().log("Starting demo loop.");
 
         try (persistentArena) {
             initLevel(true, u8g2);
@@ -671,24 +666,33 @@ public class Centipede extends Base {
                     break;
                 }
             }
-
-            synchronized (shutdownLock) {
-                try {
-                    Runtime.getRuntime().removeShutdownHook(hook);
-                } catch (final IllegalStateException e) {
-                    // Swallow exception if JVM is already shutting down anyway
-                }
-                log.debug("Main loop terminated sequentially. Handing off to base hardware cleanup.");
-            }
+            log.atDebug().log("Main loop terminated sequentially. Handing off to base hardware cleanup.");
         }
     }
 
     /**
-     * Entrypoint configuration.
+     * Entrypoint configuration with proper shutdown hook and thread joining.
      *
      * @param args System line runtime variables.
      */
     public static void main(final String... args) {
-        System.exit(new CommandLine(new Centipede()).execute(args));
+        final var app = new Centipede();
+        final var mainThread = Thread.currentThread();
+
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            log.atDebug().log("Shutdown signal acknowledged by hook thread.");
+            app.running = false;
+            if (app.executionThread != null) {
+                app.executionThread.interrupt();
+            }
+            try {
+                // Ensure the hook waits for the main thread to finish cleanup and turn off the display
+                mainThread.join(2000);
+            } catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }));
+
+        System.exit(new CommandLine(app).execute(args));
     }
 }

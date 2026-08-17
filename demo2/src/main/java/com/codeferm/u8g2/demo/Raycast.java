@@ -20,14 +20,45 @@ import picocli.CommandLine.Option;
  * @since 1.0.0
  */
 @Slf4j
-@Command(name = "Raycast", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
-        description = "Clean 3D Raycasting walkthrough with full var and final")
+@Command(
+        name = "Raycast",
+        mixinStandardHelpOptions = true,
+        version = "1.0.0-SNAPSHOT",
+        description = "Clean 3D Raycasting walkthrough with full var and final"
+)
 public class Raycast extends Base {
+
+    /**
+     * Main method entry point instantiating application context and mapping shutdown hooks.
+     *
+     * @param args Command line argument array references.
+     */
+    public static void main(final String... args) {
+        final var app = new Raycast();
+        final var mainThread = Thread.currentThread();
+
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            log.atDebug().log("Shutdown signal acknowledged by hook thread.");
+            app.running = false;
+            mainThread.interrupt();
+            try {
+                mainThread.join(2000);
+            } catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }));
+
+        System.exit(new CommandLine(app).execute(args));
+    }
 
     /**
      * Target execution frames per second parameter option.
      */
-    @Option(names = {"-f", "--fps"}, description = "Frames per second", defaultValue = "30")
+    @Option(
+            names = {"-f", "--fps"},
+            description = "Frames per second",
+            defaultValue = "30"
+    )
     private int fps;
 
     /**
@@ -250,15 +281,6 @@ public class Raycast extends Base {
         var currentAction = 0;
         log.info("Starting Raycast demo (2000 frames)...");
 
-        // Attaching active thread coordination hooks to clean loops up during interrupt loops
-        final var mainThread = Thread.currentThread();
-        final var shutdownHook = new Thread(() -> {
-            log.debug("Interrupt caught! Changing tracking flags to release rendering loops...");
-            this.running = false;
-            mainThread.interrupt();
-        });
-        Runtime.getRuntime().addShutdownHook(shutdownHook);
-
         try {
             for (var i = 0; (i < 2000) && running; i++) {
                 // Pick a new random movement every 20-40 frames
@@ -270,24 +292,10 @@ public class Raycast extends Base {
 
                 Thread.sleep(frameDelay);
             }
-        } catch (InterruptedException e) {
+        } catch (final InterruptedException e) {
             log.debug("Processing cycle interrupted during application finalization sequences.");
         } finally {
-            try {
-                Runtime.getRuntime().removeShutdownHook(shutdownHook);
-            } catch (IllegalStateException e) {
-                // Catch standard faults if processing teardown is active via secondary routines
-            }
             log.info("Demo complete.");
         }
-    }
-
-    /**
-     * Execution script driver entry sequence mapping options array values directly to command parsers.
-     *
-     * @param args Array mapping configurations structure details input strings.
-     */
-    public static void main(final String... args) {
-        System.exit(new CommandLine(new Raycast()).execute(args));
     }
 }

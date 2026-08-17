@@ -15,6 +15,7 @@ import java.util.Arrays;
 import lombok.extern.slf4j.Slf4j;
 import org.u8g2.U8g2;
 import picocli.CommandLine;
+import picocli.CommandLine.Command;
 
 /**
  * This version uses pre-allocated buffers and direct raster bit-scraping.
@@ -28,9 +29,48 @@ import picocli.CommandLine;
  * @since 1.0.0
  */
 @Slf4j
-@CommandLine.Command(name = "BufImage", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
-        description = "Optimized BufferedImage demo")
+@Command(
+        name = "BufImage",
+        mixinStandardHelpOptions = true,
+        version = "1.0.0-SNAPSHOT",
+        description = "Optimized BufferedImage demo"
+)
 public class BufImage extends Base {
+
+    /**
+     * Main method entry point instantiating application context and mapping shutdown hooks.
+     *
+     * @param args Command line argument array references.
+     */
+    public static void main(final String... args) {
+        final var app = new BufImage();
+        final var mainThread = Thread.currentThread();
+
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            log.atDebug().log("Shutdown signal acknowledged by hook thread.");
+            app.running = false;
+            if (app.thread != null) {
+                app.thread.interrupt();
+            }
+            try {
+                mainThread.join(2000);
+            } catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }));
+
+        System.exit(new CommandLine(app).execute(args));
+    }
+
+    /**
+     * Game execution loop active control volatile flag.
+     */
+    protected volatile boolean running = true;
+
+    /**
+     * Reference handle to the main active game execution thread.
+     */
+    private Thread thread;
 
     /**
      * Java-side canvas for 2D drawing.
@@ -105,7 +145,7 @@ public class BufImage extends Base {
         Arrays.fill(localBuffer, (byte) 0);
 
         // Java Raster: Horizontal rows, 8 pixels per byte, MSB first.
-        // U8g2 Raster: Vertical pages (8px high), LSB first.                 
+        // U8g2 Raster: Vertical pages (8px high), LSB first.              
         for (var y = 0; y < h; y++) {
             final var rowOffset = y * ((w + 7) / 8);
             final var pageOffset = (y / 8) * w;
@@ -159,21 +199,21 @@ public class BufImage extends Base {
      */
     @Override
     protected void run(final MemorySegment u8g2) {
+        this.thread = Thread.currentThread();
         initBuffers(u8g2);
         renderFrame(u8g2, "Java 2D FFM");
         try {
-            Thread.sleep(getSleep());
+            final var sleepTime = getSleep();
+            if (sleepTime > 0) {
+                Thread.sleep(sleepTime);
+            } else {
+                while (this.running) {
+                    Thread.sleep(100);
+                }
+            }
+            log.debug("Exit running state");
         } catch (final InterruptedException e) {
-            Thread.currentThread().interrupt();
+            log.debug("Execution thread context step interrupted clean.");
         }
-    }
-
-    /**
-     * Main parsing, error handling and handling user requests for usage help or version help are done with one line of code.
-     *
-     * @param args Argument list.
-     */
-    public static void main(String... args) {
-        System.exit(new CommandLine(new BufImage()).execute(args));
     }
 }

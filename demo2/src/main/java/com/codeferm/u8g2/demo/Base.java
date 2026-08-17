@@ -232,15 +232,8 @@ public abstract class Base implements Callable<Integer> {
         log.atDebug().log("Type {}", type);
         log.atDebug().log("Font {}", font);
 
-        // Critical Fix: Initialize via Shared Arena to ensure thread cross-boundaries stay legal for SIGINT hook
-        final var arena = Arena.ofShared();
-        try {
-            // Allocate the u8g2 structure based on the jextract layout
+        try (final var arena = Arena.ofShared()) {
             final var u8g2 = arena.allocate(org.u8g2.u8g2_struct.layout());
-
-            // Register an emergency JVM hook mapped directly to this execution scope's precise allocations
-            final var emergencyHook = new Thread(() -> executeTeardown(u8g2, arena));
-            Runtime.getRuntime().addShutdownHook(emergencyHook);
 
             try {
                 switch (type) {
@@ -268,25 +261,14 @@ public abstract class Base implements Callable<Integer> {
                 run(u8g2);
 
             } finally {
-                try {
-                    Runtime.getRuntime().removeShutdownHook(emergencyHook);
-                } catch (final IllegalStateException e) {
-                    // Failing to remove when the JVM is already shutting down is standard
-                }
                 executeTeardown(u8g2, arena);
-            }
-        } finally {
-            // Clean up the parent shared arena scope boundary on clean programmatic exits
-            if (arena.scope().isAlive()) {
-                arena.close();
             }
         }
         return exitCode;
     }
 
     /**
-     * Isolated structural teardown block. Safely handles state updates across both standard termination boundaries and sudden
-     * runtime interruptions.
+     * Isolated structural teardown block executed sequentially by the main thread.
      *
      * @param u8g2 The display memory context reference.
      * @param arena The parent unmanaged memory allocator context.

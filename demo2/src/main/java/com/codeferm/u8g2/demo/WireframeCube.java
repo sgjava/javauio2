@@ -15,8 +15,8 @@ import picocli.CommandLine.Option;
 /**
  * 3D Wireframe Cube with dynamic scaling, randomized movement, and FPS control.
  * <p>
- * Optimized for FFM with zero-allocation in the main loop and precise nano-pacing. Coordinated via explicit thread lifecycle
- * management to prevent concurrent hardware teardown memory pointer corruption during JVM shutdown.
+ * Optimized for FFM with zero-allocation in the main loop and precise nano-pacing. Coordinated via standard execution control flags
+ * to safely exit the animation loop when termination is requested.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -218,6 +218,11 @@ public class WireframeCube extends Base {
         }
     }
 
+    /**
+     * Execution loop override managed through Base class context.
+     *
+     * @param u8g2 Native MemorySegment reference.
+     */
     @Override
     protected void run(final MemorySegment u8g2) {
         try {
@@ -235,18 +240,18 @@ public class WireframeCube extends Base {
      */
     public static void main(final String... args) {
         final var app = new WireframeCube();
+        final var mainThread = Thread.currentThread();
 
-        // Application-level signal handler catches Ctrl+C to isolate Base from running teardown concurrently
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            log.atDebug().log("Shutdown signal acknowledged by hook thread.");
             app.running = false;
             if (app.executionThread != null) {
                 app.executionThread.interrupt();
-                try {
-                    // Force the JVM hook sequence to block until the loop escapes native spaces safely
-                    app.executionThread.join(1000);
-                } catch (final InterruptedException ignored) {
-                    Thread.currentThread().interrupt();
-                }
+            }
+            try {
+                mainThread.join(2000);
+            } catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
         }));
 
