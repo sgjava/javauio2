@@ -11,7 +11,7 @@ import lombok.extern.slf4j.Slf4j;
  * Base for all demos.
  *
  * @author Steven P. Goldsmith
- * @version 1.1.0
+ * @version 1.0.0
  */
 @Slf4j
 public abstract class AbstractDemo implements Callable<Integer> {

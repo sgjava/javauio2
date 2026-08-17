@@ -18,7 +18,7 @@ import picocli.CommandLine.Option;
  * </p>
  *
  * @author Steven P. Goldsmith
- * @version 1.1.0
+ * @version 1.0.0
  * @since 1.0.0
  */
 @Slf4j
