@@ -9,6 +9,22 @@ code. Just pass in --help to get list of command line arguments. Make sure demo2
 
 * `java -cp "demo2-1.0.0-SNAPSHOT-jar-with-dependencies.jar" --enable-native-access=ALL-UNNAMED com.codeferm.periphery.demo.GpioOutDemo --help`
 
+## Swift-LCD (ST7789) Demos
+
+These demos showcase driving the [Swift-LCD modules](https://github.com/nulllaborg/swift-lcd) (1.3"/2.0" IPS TFT LCD screens over a standard 4-wire SPI bus utilizing the ST7789 driver IC) via the **Java Foreign Function & Memory (FFM) API**.
+
+### Dirty-Rectangle Partial Screen Updates
+Instead of repainting and pushing the entire 240x240 or 240x320 framebuffer every frame, this architecture maximizes performance by optimizing SPI bus traffic.
+* **How it works**: The system tracks the bounding boxes of moving entities (e.g., player, invaders, projectiles, explosions, score areas). It restores the background, redraws only the active elements, and pushes only the minimal changed rectangular window(s) to the display via SPI.
+* **Best for**: Games and dynamic UIs where only small portions of the screen change, significantly lowering CPU load and SPI bandwidth requirements.
+
+* SpaceInvaders.java: A fully playable Space Invaders port for the ST7789, serving as a masterclass in dirty-rectangle rendering, fluid AI momentum logic, and partial FFM screen updates.
+
+## Run Swift-LCD Periphery demos
+ To see a list of demos 
+[browse](https://github.com/sgjava/javauio2/tree/main/demo2/src/main/java/com/codeferm/periphery/st7789/demo)
+code. Just pass in --help to get list of command line arguments. Make sure demo2-1.0.0-SNAPSHOT-jar-with-dependencies.jar is in the current directory.
+
 ## SSD1331 Java Demos: Rendering Architectures
 
 This showcases high-performance OLED manipulation using the **Java Foreign Function & Memory (FFM) API**. Each demo utilizes a different architectural approach to balance CPU load, bus traffic, and graphical complexity.
@@ -78,7 +94,7 @@ Line wrapping is built in as well.
 * SpaceInvaders.java: A classic arcade implementation that serves as a masterclass in game loop logic, collision detection, and sprite management within the monochrome constraints of U8g2.
 
 ![Centipede](images/Centipede.png)
-* Centipede.java: A high-performance implementation of the classic arcade game Centipede, optimized for low-resolution displays (128x64 or128x128). 
+* Centipede.java: A high-performance implementation of the classic arcade game Centipede, optimized for low-resolution displays (128x64 or 128x128). 
 
 ![WireframeCube](images/WireframeCube.png)
 * WireframeCube.java uses math and drawing primitives to animate rotating 3D wireframe cube. No cheating with sprites here.
