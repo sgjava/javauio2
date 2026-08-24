@@ -13,9 +13,9 @@
 
 ## 🚀 The New Standard
 This project adheres to rigorous development standards to ensure production-grade reliability and performance:
-* **Modern Java:** Full utilization modern Java and the latest FFM features.
-* **Zero Allocation:** Frame-based operations (like SSD1331 rendering) use pre-allocated buffers to eliminate GC pressure during high-speed I/O.
-* **Clean Architecture:** **No native loaders in device classes.** Native loading is handled at the application level, keeping core logic decoupled and lean.
+* **Modern Java:** Full utilization of modern Java and the latest FFM features.
+* **Zero Allocation:** Frame-based operations (like color display rendering via abstract device abstractions) use pre-allocated buffers to eliminate GC pressure during high-speed I/O.
+* **Clean Architecture:** **No native loaders in device classes.** Native loading is handled exclusively at the application (demo) level, keeping core logic decoupled and lean, with strict adherence to `javadoc`, `var`, and `final` standards.
 * **Complete Documentation:** 100% Javadoc coverage for all public APIs.
 
 ---
@@ -28,14 +28,14 @@ This project adheres to rigorous development standards to ensure production-grad
 | **FFM Integration** | **Plugin Level.** FFM is an optional provider module. | **JNI Core.** Primarily utilizes JNI/JNA for native access. | **Native FFM.** Built specifically for Project Panama as the core engine. |
 | **32-Bit / Legacy ARM** | **Dropped.** No longer supports arm32 (Pi4J v3+ targets 64-bit architectures). | **Stagnant / Legacy.** Works on older 32-bit targets, but library development has slowed significantly. | **Universal 32/64-bit.** Runs natively across modern 64-bit and legacy 32-bit Linux kernels without distinction. |
 | **Board Support** | Board-specific definitions/configs often required. | Broad, but requires factory logic or native maps for each SoC. | **Universal.** If it runs a standard Linux kernel, it works instantly. |
-| **Graphics** | Community-ported Java drivers. | High-level/basic shape support. | **Deep u8g2 Binding** for nearly 200 displays. Full C-performance for **SSD1331** OLEDs. |
+| **Graphics** | Community-ported Java drivers. | High-level/basic shape support. | **Abstracted Color Displays** for flexible hardware output. Full C-performance for color displays. |
 | **Portability** | Heavyweight (Core + Provider + Config). | Lightweight core, but SoC-specific factories. | **Ultra-Lightweight.** Zero-dependency bridge to Linux interfaces. |
 
 ### 1. Universal Kernel-Standardized I/O
 Most libraries require a "Provider" or specific plugin for every new board. **Java UIO 2** bypasses this middleman. By targeting the **Standard Linux Kernel ABI** (Character Devices and UIO), any board running a modern kernel is supported immediately. The Kernel is the only "Provider" you need.
 
-### 2. Deep Graphics with u8g2 & SSD1331
-While other libraries stop at "Blinky," Java UIO 2 provides a professional-grade graphics stack. By binding the industry-standard **u8g2** library via FFM, you gain access to hundreds of fonts and optimized drawing routines at near-native speeds.
+### 2. Deep Graphics with Abstract Color Displays
+While other libraries stop at "Blinky," Java UIO 2 provides a professional-grade graphics stack. By abstracting display hardware and utilizing high-performance memory segments via FFM, you gain access to optimized drawing routines at near-native speeds.
 
 ### 3. Hardware-Accurate Native Sizing
 A major weakness in traditional libraries is their reliance on manual JNI headers. Java UIO 2 uses a **Native Sizer** during the build process (via QEMU emulation). This guarantees that `MemoryLayout` offsets are byte-perfect for the target CPU architecture (ARM64, ARM32, or x86_64), preventing alignment traps and crashes.
@@ -66,8 +66,8 @@ In raw performance testing on the Pine A64 (Cortex-A53), the FFM implementation 
 
 ## 📦 Project Depth
 This repository contains more than just a library; it includes exhaustive demos demonstrating real-world complexity:
-* **SSD1331 OLED:** Full-color graphics, custom fonts, and buffer rotations.
-* **Game Logic:** Atari-style Centipede clones showcasing memory-efficient movement controllers.
+* **Color Displays:** Full-color graphics, custom fonts, and buffer rotations using abstract display classes.
+* **Game Logic:** Arcade-style scrollers showcasing memory-efficient movement controllers and zero-allocation rendering loops.
 * **Native Demos:** Direct ports of JNI demos to the modern FFM era.
 
 ---

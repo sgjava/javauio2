@@ -8,18 +8,15 @@ import java.awt.image.DataBufferInt;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.util.concurrent.TimeUnit;
-import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.periphery.Periphery;
-import org.periphery.gpio_handle;
-import org.periphery.spi_handle;
 
 /**
- * ST7789 240x320 RGB IPS LCD module driver using Java Foreign Function & Memory (FFM) API.
+ * ST7789 240x320 RGB IPS LCD module driver using Java Foreign Function & Memory (FFM) API, extending {@link AbstractColorDisplay}.
  * <p>
  * This driver provides a high-performance interface to the ST7789 controller, utilizing {@link MemorySegment} for zero-copy data
  * transfers. Optimized with a zero-allocation strategy to prevent memory thrashing and OutOfMemoryErrors in tight loops. It
- * inherits automated safe-teardown from {@link AbstractDevice}.
+ * inherits automated safe-teardown from {@link AbstractDevice} and implements pixel and shape drawing via software rasterization.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -27,12 +24,7 @@ import org.periphery.spi_handle;
  * @since 1.0.0
  */
 @Slf4j
-public class St7789 extends AbstractDevice {
-
-    /**
-     * libperiphery constant for output direction (1 = GPIO_DIR_OUT).
-     */
-    private static final int GPIO_DIR_OUT = 1;
+public class St7789 extends AbstractColorDisplay {
 
     /**
      * Software Reset command.
@@ -150,38 +142,6 @@ public class St7789 extends AbstractDevice {
     public static final byte NVGAMCTRL = (byte) 0xE1;
 
     /**
-     * Native handle for the Data/Command GPIO pin.
-     */
-    private final MemorySegment dcHandle;
-
-    /**
-     * Reusable native segment for SPI commands to prevent heap thrashing.
-     */
-    private final MemorySegment commandSegment;
-
-    /**
-     * Reusable native segment for full-frame image data.
-     */
-    private final MemorySegment imageSegment;
-
-    /**
-     * Transfer chunk buffer size (defaults to 65536 bytes).
-     */
-    private final int bufferSize;
-
-    /**
-     * ST7789 display width in pixels.
-     */
-    @Getter
-    private final int width = 240;
-
-    /**
-     * ST7789 display height in pixels.
-     */
-    @Getter
-    private final int height = 320;
-
-    /**
      * Initializes hardware with SPI and GPIO handles via FFM using a default 64KB chunk buffer.
      *
      * @param device SPI device path.
@@ -206,17 +166,13 @@ public class St7789 extends AbstractDevice {
      */
     public St7789(final String device, final int mode, final int speed, final String gpioDevice, final int dcPin,
             final int bufferSize) {
-        super(spi_handle.layout());
-        this.bufferSize = bufferSize;
-        this.dcHandle = getArena().allocate(gpio_handle.layout());
-        this.commandSegment = getArena().allocate(64);
-        this.imageSegment = getArena().allocate((long) width * height * 2);
+        super(240, 320, bufferSize);
         final var cDevice = getArena().allocateFrom(device);
         final var cGpioDev = getArena().allocateFrom(gpioDevice);
         if (Periphery.spi_open(getHandle(), cDevice, mode, speed) < 0) {
             throw new RuntimeException("SPI open failed");
         }
-        if (Periphery.gpio_open(dcHandle, cGpioDev, dcPin, GPIO_DIR_OUT) < 0) {
+        if (Periphery.gpio_open(getDcHandle(), cGpioDev, dcPin, GPIO_DIR_OUT) < 0) {
             throw new RuntimeException("DC GPIO open failed");
         }
         setup();
@@ -228,19 +184,20 @@ public class St7789 extends AbstractDevice {
      *
      * @param data Command array with optional parameter bytes.
      */
+    @Override
     public final void writeCommand(final byte[] data) {
         if (getHandle().address() != 0 && getArena().scope().isAlive()) {
             // Command byte with D/C LOW
-            Periphery.gpio_write(dcHandle, false);
-            commandSegment.set(ValueLayout.JAVA_BYTE, 0L, data[0]);
-            if (Periphery.spi_transfer(getHandle(), commandSegment, MemorySegment.NULL, 1) < 0) {
+            Periphery.gpio_write(getDcHandle(), false);
+            getCommandSegment().set(ValueLayout.JAVA_BYTE, 0L, data[0]);
+            if (Periphery.spi_transfer(getHandle(), getCommandSegment(), MemorySegment.NULL, 1) < 0) {
                 throw new RuntimeException("SPI Command failed");
             }
             // Parameter bytes with D/C HIGH
             if (data.length > 1) {
-                Periphery.gpio_write(dcHandle, true);
-                MemorySegment.copy(data, 1, commandSegment, ValueLayout.JAVA_BYTE, 0, data.length - 1);
-                if (Periphery.spi_transfer(getHandle(), commandSegment, MemorySegment.NULL, data.length - 1) < 0) {
+                Periphery.gpio_write(getDcHandle(), true);
+                MemorySegment.copy(data, 1, getCommandSegment(), ValueLayout.JAVA_BYTE, 0, data.length - 1);
+                if (Periphery.spi_transfer(getHandle(), getCommandSegment(), MemorySegment.NULL, data.length - 1) < 0) {
                     throw new RuntimeException("SPI Command parameters failed");
                 }
             }
@@ -253,9 +210,10 @@ public class St7789 extends AbstractDevice {
      *
      * @param segment Native segment containing pixel data.
      */
+    @Override
     public final void writeData(final MemorySegment segment) {
         if (getHandle().address() != 0 && getArena().scope().isAlive()) {
-            Periphery.gpio_write(dcHandle, true);
+            Periphery.gpio_write(getDcHandle(), true);
             final var totalBytes = segment.byteSize();
             var offset = 0L;
             while (offset < totalBytes) {
@@ -270,21 +228,11 @@ public class St7789 extends AbstractDevice {
     }
 
     /**
-     * Sends data bytes (pixels) from a Java array.
-     *
-     * @param data Pixel data array.
-     */
-    public final void writeData(final byte[] data) {
-        final var cData = getArena().allocateFrom(ValueLayout.JAVA_BYTE, data);
-        writeData(cData);
-    }
-
-    /**
      * Performs software reset and complete initialization sequence for 2.0-inch ST7789 IPS panels.
      */
     public final void setup() {
         try {
-            Periphery.gpio_write(dcHandle, false);
+            Periphery.gpio_write(getDcHandle(), false);
             TimeUnit.MILLISECONDS.sleep(150);
             writeCommand(new byte[]{SWRESET});
             TimeUnit.MILLISECONDS.sleep(150);
@@ -321,12 +269,35 @@ public class St7789 extends AbstractDevice {
     /**
      * Clears the display matching the exact frame boundaries.
      */
+    @Override
     public final void clear() {
-        writeCommand(new byte[]{CASET, (byte) 0x00, (byte) 0x00, (byte) ((width - 1) >> 8), (byte) (width - 1)});
-        writeCommand(new byte[]{RASET, (byte) 0x00, (byte) 0x00, (byte) ((height - 1) >> 8), (byte) (height - 1)});
+        writeCommand(new byte[]{CASET, (byte) 0x00, (byte) 0x00, (byte) ((getWidth() - 1) >> 8), (byte) (getWidth() - 1)});
+        writeCommand(new byte[]{RASET, (byte) 0x00, (byte) 0x00, (byte) ((getHeight() - 1) >> 8), (byte) (getHeight() - 1)});
         writeCommand(new byte[]{RAMWR});
-        imageSegment.fill((byte) 0);
-        writeData(imageSegment);
+        getImageSegment().fill((byte) 0);
+        writeData(getImageSegment());
+    }
+
+    /**
+     * Draws a single pixel directly into the native frame buffer memory segment in RGB565 format.
+     *
+     * @param x X coordinate.
+     * @param y Y coordinate.
+     * @param color RGB color integer.
+     */
+    @Override
+    public final void drawPixel(final int x, final int y, final int color) {
+        if (x >= 0 && x < getWidth() && y >= 0 && y < getHeight()) {
+            final var p = color;
+            final var packed = (short) ((((p >> 19) & 0x1F) << 11) | (((p >> 10) & 0x3F) << 5) | ((p >> 3) & 0x1F));
+            final var offset = (long) (y * getWidth() + x) * 2L;
+            getImageSegment().set(ValueLayout.JAVA_SHORT_UNALIGNED, offset, Short.reverseBytes(packed));
+
+            // Push individual pixel update to display frame memory
+            setWindow(x, y, 1, 1);
+            final var pixelSegment = getImageSegment().asSlice(offset, 2L);
+            writeData(pixelSegment);
+        }
     }
 
     /**
@@ -334,19 +305,72 @@ public class St7789 extends AbstractDevice {
      *
      * @param image BufferedImage to render.
      */
+    @Override
     public final void drawImage(final BufferedImage image) {
-        writeCommand(new byte[]{CASET, (byte) 0x00, (byte) 0x00, (byte) ((width - 1) >> 8), (byte) (width - 1)});
-        writeCommand(new byte[]{RASET, (byte) 0x00, (byte) 0x00, (byte) ((height - 1) >> 8), (byte) (height - 1)});
+        writeCommand(new byte[]{CASET, (byte) 0x00, (byte) 0x00, (byte) ((getWidth() - 1) >> 8), (byte) (getWidth() - 1)});
+        writeCommand(new byte[]{RASET, (byte) 0x00, (byte) 0x00, (byte) ((getHeight() - 1) >> 8), (byte) (getHeight() - 1)});
         writeCommand(new byte[]{RAMWR});
 
-        final var pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
-        for (var i = 0; i < pixels.length; i++) {
-            final var p = pixels[i];
-            final var packed = (short) ((((p >> 19) & 0x1F) << 11) | (((p >> 10) & 0x3F) << 5) | ((p >> 3) & 0x1F));
-            imageSegment.set(ValueLayout.JAVA_SHORT_UNALIGNED, i * 2L, Short.reverseBytes(packed));
-        }
+        packRgb888ToRgb565(image);
 
-        writeData(imageSegment);
+        writeData(getImageSegment());
+    }
+
+    /**
+     * Maps a sub-region of a {@link BufferedImage} to RGB565 and renders it to a specific window on the display (dirty write).
+     *
+     * @param image Source BufferedImage.
+     * @param x Destination window X start coordinate.
+     * @param y Destination window Y start coordinate.
+     * @param width Window width.
+     * @param height Window height.
+     */
+    @Override
+    public final void drawImage(final BufferedImage image, final int x, final int y, final int width, final int height) {
+        setWindow(x, y, width, height);
+        final var pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
+        final var imgWidth = image.getWidth();
+
+        var destOffset = 0L;
+        for (var sy = 0; sy < height; sy++) {
+            for (var sx = 0; sx < width; sx++) {
+                final var p = pixels[sy * imgWidth + sx];
+                final var packed = (short) ((((p >> 19) & 0x1F) << 11) | (((p >> 10) & 0x3F) << 5) | ((p >> 3) & 0x1F));
+                getImageSegment().set(ValueLayout.JAVA_SHORT_UNALIGNED, destOffset, Short.reverseBytes(packed));
+                destOffset += 2L;
+            }
+        }
+        writeData(getImageSegment().asSlice(0L, (long) width * height * 2L));
+    }
+
+    /**
+     * Sets the active drawing window on the ST7789 display controller.
+     * <p>
+     * Sends column address, row address, and RAM write commands to define the active rendering frame buffer region.
+     * </p>
+     *
+     * @param x X start coordinate.
+     * @param y Y start coordinate.
+     * @param width Window width.
+     * @param height Window height.
+     */
+    @Override
+    public final void setWindow(final int x, final int y, final int width, final int height) {
+        writeCommand(new byte[]{
+            (byte) 0x2A,
+            (byte) (x >> 8),
+            (byte) (x & 0xFF),
+            (byte) ((x + width - 1) >> 8),
+            (byte) ((x + width - 1) & 0xFF)
+        });
+        writeCommand(new byte[]{
+            (byte) 0x2B,
+            (byte) (y >> 8),
+            (byte) (y & 0xFF),
+            (byte) ((y + height - 1) >> 8),
+            (byte) ((y + height - 1) & 0xFF)
+        });
+        writeCommand(new byte[]{(byte) 0x2C});
     }
 
     /**
@@ -366,8 +390,8 @@ public class St7789 extends AbstractDevice {
             if (getHandle().address() != 0) {
                 Periphery.spi_close(getHandle());
             }
-            if (dcHandle.address() != 0) {
-                Periphery.gpio_close(dcHandle);
+            if (getDcHandle().address() != 0) {
+                Periphery.gpio_close(getDcHandle());
             }
         }
     }

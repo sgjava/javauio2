@@ -5,22 +5,19 @@ package com.codeferm.periphery.device;
 
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.util.concurrent.TimeUnit;
-import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.periphery.Periphery;
 import org.periphery.gpio_handle;
-import org.periphery.spi_handle;
 
 /**
- * SSD1331 96x64 RGB OLED driver using Java Foreign Function & Memory (FFM) API.
+ * SSD1331 96x64 RGB OLED driver using Java Foreign Function & Memory (FFM) API, extending {@link AbstractColorDisplay}.
  * <p>
  * This driver provides a high-performance interface to the SSD1331 controller, utilizing {@link MemorySegment} for zero-copy data
- * transfers and supporting all Hardware Graphic Acceleration Commands (GAC). Optimized with a zero-allocation strategy to prevent
- * memory thrashing and OutOfMemoryErrors in tight loops. It inherits automated safe-teardown from {@link AbstractDevice}.
+ * transfers and supporting all Hardware Graphic Acceleration Commands (GAC) overrides. Optimized with a zero-allocation strategy to
+ * prevent memory thrashing.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -28,12 +25,7 @@ import org.periphery.spi_handle;
  * @since 1.0.0
  */
 @Slf4j
-public class Ssd1331 extends AbstractDevice {
-
-    /**
-     * libperiphery constant for output direction (1 = GPIO_DIR_OUT).
-     */
-    private static final int GPIO_DIR_OUT = 1;
+public class Ssd1331 extends AbstractColorDisplay {
 
     /**
      * Set column start and end address.
@@ -176,39 +168,12 @@ public class Ssd1331 extends AbstractDevice {
     public static final byte ACTIVATE_SCROLLING = (byte) 0x2F;
 
     /**
-     * Native handle for the Data/Command GPIO pin.
-     */
-    private final MemorySegment dcHandle;
-
-    /**
      * Native handle for the Hardware Reset GPIO pin.
      */
     private final MemorySegment resHandle;
 
     /**
-     * Reusable native segment for SPI commands to prevent heap thrashing.
-     */
-    private final MemorySegment commandSegment;
-
-    /**
-     * Reusable native segment for full-frame image data.
-     */
-    private final MemorySegment imageSegment;
-
-    /**
-     * SSD1331 display width in pixels.
-     */
-    @Getter
-    private final int width = 96;
-
-    /**
-     * SSD1331 display height in pixels.
-     */
-    @Getter
-    private final int height = 64;
-
-    /**
-     * Initialize hardware with SPI and GPIO handles via FFM.
+     * Initialize hardware with SPI and GPIO handles via FFM using default 64KB buffer size.
      *
      * @param device SPI device path.
      * @param mode SPI mode.
@@ -219,19 +184,28 @@ public class Ssd1331 extends AbstractDevice {
      */
     public Ssd1331(final String device, final int mode, final int speed,
             final String gpioDevice, final int dcPin, final int resPin) {
-        // Registers with HardwareRegistry and maps primary spi_handle structure
-        super(spi_handle.layout());
+        this(device, mode, speed, gpioDevice, dcPin, resPin, 65536);
+    }
 
-        this.dcHandle = getArena().allocate(gpio_handle.layout());
+    /**
+     * Initialize hardware with SPI and GPIO handles via FFM with configurable buffer size.
+     *
+     * @param device SPI device path.
+     * @param mode SPI mode.
+     * @param speed SPI speed in Hz.
+     * @param gpioDevice GPIO chip path.
+     * @param dcPin Data/Command BCM pin number.
+     * @param resPin Reset BCM pin number.
+     * @param bufferSize Transfer buffer chunk size in bytes.
+     */
+    public Ssd1331(final String device, final int mode, final int speed,
+            final String gpioDevice, final int dcPin, final int resPin, final int bufferSize) {
+        super(96, 64, bufferSize);
+
         this.resHandle = getArena().allocate(gpio_handle.layout());
 
-        // Pre-allocate command buffer (64 bytes is plenty for any GAC command)
-        this.commandSegment = getArena().allocate(64);
-        // Pre-allocate image buffer (width * height * 2 bytes for RGB565)
-        this.imageSegment = getArena().allocate(width * height * 2);
-
-        final MemorySegment cDevice = getArena().allocateFrom(device);
-        final MemorySegment cGpioDev = getArena().allocateFrom(gpioDevice);
+        final var cDevice = getArena().allocateFrom(device);
+        final var cGpioDev = getArena().allocateFrom(gpioDevice);
 
         if (Periphery.spi_open(getHandle(), cDevice, mode, speed) < 0) {
             throw new RuntimeException("SPI open failed");
@@ -250,40 +224,37 @@ public class Ssd1331 extends AbstractDevice {
      *
      * @param data Command array.
      */
+    @Override
     public final void writeCommand(final byte[] data) {
         if (getHandle().address() != 0 && getArena().scope().isAlive()) {
             Periphery.gpio_write(dcHandle, false);
-            // Copy heap data to pre-allocated native memory
-            MemorySegment.copy(data, 0, commandSegment, ValueLayout.JAVA_BYTE, 0, data.length);
-            if (Periphery.spi_transfer(getHandle(), commandSegment, commandSegment, data.length) < 0) {
+            MemorySegment.copy(data, 0, getCommandSegment(), ValueLayout.JAVA_BYTE, 0, data.length);
+            if (Periphery.spi_transfer(getHandle(), getCommandSegment(), getCommandSegment(), data.length) < 0) {
                 throw new RuntimeException("SPI Command failed");
             }
         }
     }
 
     /**
-     * Sends data bytes (pixels) directly from a {@link MemorySegment} (DC pin HIGH).
+     * Sends data bytes (pixels) directly from a {@link MemorySegment} in optimized chunks (DC pin HIGH).
      *
      * @param segment Native segment containing pixel data.
      */
+    @Override
     public final void writeData(final MemorySegment segment) {
         if (getHandle().address() != 0 && getArena().scope().isAlive()) {
             Periphery.gpio_write(dcHandle, true);
-            if (Periphery.spi_transfer(getHandle(), segment, segment, (int) segment.byteSize()) < 0) {
-                throw new RuntimeException("SPI Data Segment transfer failed");
+            final var totalBytes = segment.byteSize();
+            var offset = 0L;
+            while (offset < totalBytes) {
+                final var length = (int) Math.min(bufferSize, totalBytes - offset);
+                final var chunk = segment.asSlice(offset, length);
+                if (Periphery.spi_transfer(getHandle(), chunk, MemorySegment.NULL, length) < 0) {
+                    throw new RuntimeException("SPI Data Segment transfer failed at offset " + offset);
+                }
+                offset += length;
             }
         }
-    }
-
-    /**
-     * Sends data bytes (pixels) from a Java array (DC pin HIGH). Note: This still allocates a temporary segment; use
-     * writeData(MemorySegment) in hot loops.
-     *
-     * @param data Pixel data array.
-     */
-    public final void writeData(final byte[] data) {
-        final MemorySegment cData = getArena().allocateFrom(ValueLayout.JAVA_BYTE, data);
-        writeData(cData);
     }
 
     /**
@@ -325,48 +296,130 @@ public class Ssd1331 extends AbstractDevice {
     /**
      * Clears the display via GAC command.
      */
+    @Override
     public final void clear() {
-        writeCommand(new byte[]{CLEAR_WINDOW, (byte) 0, (byte) 0, (byte) (width - 1), (byte) (height - 1)});
+        writeCommand(new byte[]{CLEAR_WINDOW, (byte) 0, (byte) 0, (byte) (getWidth() - 1), (byte) (getHeight() - 1)});
     }
 
     /**
-     * Hardware accelerated line drawing.
+     * Draws a single pixel by delegating to a 1x1 hardware rectangle fill.
      *
-     * @param x1 Start X.
-     * @param y1 Start Y.
-     * @param x2 End X.
-     * @param y2 End Y.
+     * @param x X coordinate.
+     * @param y Y coordinate.
+     * @param color RGB color integer.
+     */
+    @Override
+    public final void drawPixel(final int x, final int y, final int color) {
+        final var r = (color >> 16) & 0xFF;
+        final var g = (color >> 8) & 0xFF;
+        final var b = color & 0xFF;
+        // Scale 8-bit color components to SSD1331 6-bit (0-63) range
+        fillRect(x, y, 1, 1, r >> 2, g >> 2, b >> 2);
+    }
+
+    /**
+     * Hardware-accelerated line drawing override using SSD1331 GAC line command.
+     *
+     * @param x0 Start X coordinate.
+     * @param y0 Start Y coordinate.
+     * @param x1 End X coordinate.
+     * @param y1 End Y coordinate.
+     * @param color RGB color integer.
+     */
+    @Override
+    public final void drawLine(final int x0, final int y0, final int x1, final int y1, final int color) {
+        final var r = ((color >> 16) & 0xFF) >> 2;
+        final var g = ((color >> 8) & 0xFF) >> 2;
+        final var b = (color & 0xFF) >> 2;
+        writeCommand(new byte[]{
+            DRAW_LINE,
+            (byte) x0, (byte) y0,
+            (byte) x1, (byte) y1,
+            (byte) r, (byte) g, (byte) b
+        });
+    }
+
+    /**
+     * Hardware-accelerated rectangle drawing override using SSD1331 GAC rectangle command (unfilled).
+     *
+     * @param x Top-left X coordinate.
+     * @param y Top-left Y coordinate.
+     * @param width Rectangle width.
+     * @param height Rectangle height.
+     * @param color RGB color integer.
+     */
+    @Override
+    public final void drawRect(final int x, final int y, final int width, final int height, final int color) {
+        final var r = ((color >> 16) & 0xFF) >> 2;
+        final var g = ((color >> 8) & 0xFF) >> 2;
+        final var b = (color & 0xFF) >> 2;
+        final var x2 = x + width - 1;
+        final var y2 = y + height - 1;
+
+        writeCommand(new byte[]{FILL_ENABLE, (byte) 0x00});
+        writeCommand(new byte[]{
+            DRAW_RECTANGLE,
+            (byte) x, (byte) y,
+            (byte) x2, (byte) y2,
+            (byte) r, (byte) g, (byte) b,
+            (byte) r, (byte) g, (byte) b
+        });
+    }
+
+    /**
+     * Hardware-accelerated filled rectangle drawing override using SSD1331 GAC rectangle command (filled).
+     *
+     * @param x Top-left X coordinate.
+     * @param y Top-left Y coordinate.
+     * @param width Rectangle width.
+     * @param height Rectangle height.
+     * @param color RGB color integer.
+     */
+    @Override
+    public final void fillRect(final int x, final int y, final int width, final int height, final int color) {
+        final var r = ((color >> 16) & 0xFF) >> 2;
+        final var g = ((color >> 8) & 0xFF) >> 2;
+        final var b = (color & 0xFF) >> 2;
+        final var x2 = x + width - 1;
+        final var y2 = y + height - 1;
+
+        writeCommand(new byte[]{FILL_ENABLE, (byte) 0x01});
+        writeCommand(new byte[]{
+            DRAW_RECTANGLE,
+            (byte) x, (byte) y,
+            (byte) x2, (byte) y2,
+            (byte) r, (byte) g, (byte) b,
+            (byte) r, (byte) g, (byte) b
+        });
+    }
+
+    /**
+     * Hardware-accelerated filled rectangle drawing with raw 6-bit color components.
+     *
+     * @param x Left X.
+     * @param y Top Y.
+     * @param width Width.
+     * @param height Height.
      * @param r Red (0-63).
      * @param g Green (0-63).
      * @param b Blue (0-63).
      */
-    public final void drawLine(final int x1, final int y1, final int x2, final int y2,
+    public final void fillRect(final int x, final int y, final int width, final int height,
             final int r, final int g, final int b) {
-        writeCommand(new byte[]{DRAW_LINE, (byte) x1, (byte) y1, (byte) x2, (byte) y2,
-            (byte) r, (byte) g, (byte) b});
+        final var x2 = x + width - 1;
+        final var y2 = y + height - 1;
+        writeCommand(new byte[]{FILL_ENABLE, (byte) 0x01});
+        writeCommand(new byte[]{
+            DRAW_RECTANGLE,
+            (byte) x, (byte) y,
+            (byte) x2, (byte) y2,
+            (byte) r, (byte) g, (byte) b,
+            (byte) r, (byte) g, (byte) b
+        });
     }
 
     /**
-     * Hardware accelerated rectangle drawing.
-     *
-     * @param x1 Left X.
-     * @param y1 Top Y.
-     * @param x2 Right X.
-     * @param y2 Bottom Y.
-     * @param r Red (0-63).
-     * @param g Green (0-63).
-     * @param b Blue (0-63).
-     * @param fill True to fill rectangle.
-     */
-    public final void drawRect(final int x1, final int y1, final int x2, final int y2,
-            final int r, final int g, final int b, final boolean fill) {
-        writeCommand(new byte[]{FILL_ENABLE, fill ? (byte) 0x01 : (byte) 0x00});
-        writeCommand(new byte[]{DRAW_RECTANGLE, (byte) x1, (byte) y1, (byte) x2, (byte) y2,
-            (byte) r, (byte) g, (byte) b, (byte) r, (byte) g, (byte) b});
-    }
-
-    /**
-     * Hardware accelerated window copy.
+     * Hardware-accelerated window copy.
      *
      * @param x1 Source left X.
      * @param y1 Source top Y.
@@ -377,8 +430,12 @@ public class Ssd1331 extends AbstractDevice {
      */
     public final void copy(final int x1, final int y1, final int x2, final int y2,
             final int dx, final int dy) {
-        writeCommand(new byte[]{COPY_WINDOW, (byte) x1, (byte) y1, (byte) x2, (byte) y2,
-            (byte) dx, (byte) dy});
+        writeCommand(new byte[]{
+            COPY_WINDOW,
+            (byte) x1, (byte) y1,
+            (byte) x2, (byte) y2,
+            (byte) dx, (byte) dy
+        });
     }
 
     /**
@@ -393,8 +450,11 @@ public class Ssd1331 extends AbstractDevice {
     public final void setupScroll(final int horizontal, final int startRow,
             final int rowCount, final int vertical, final int interval) {
         writeCommand(new byte[]{DEACTIVATE_SCROLLING});
-        writeCommand(new byte[]{SET_SCROLLING, (byte) horizontal, (byte) startRow,
-            (byte) rowCount, (byte) vertical, (byte) interval});
+        writeCommand(new byte[]{
+            SET_SCROLLING,
+            (byte) horizontal, (byte) startRow,
+            (byte) rowCount, (byte) vertical, (byte) interval
+        });
         writeCommand(new byte[]{ACTIVATE_SCROLLING});
     }
 
@@ -406,24 +466,67 @@ public class Ssd1331 extends AbstractDevice {
     }
 
     /**
-     * Maps a {@link BufferedImage} to RGB565 and sends to display via pre-allocated segment.
+     * Maps a {@link BufferedImage} to RGB565 and sends to display using zero-allocation conversion.
      *
      * @param image BufferedImage to render.
      */
+    @Override
     public final void drawImage(final BufferedImage image) {
-        writeCommand(new byte[]{SET_COLUMN_ADDRESS, (byte) 0, (byte) (width - 1)});
-        writeCommand(new byte[]{SET_ROW_ADDRESS, (byte) 0, (byte) (height - 1)});
+        writeCommand(new byte[]{SET_COLUMN_ADDRESS, (byte) 0, (byte) (getWidth() - 1)});
+        writeCommand(new byte[]{SET_ROW_ADDRESS, (byte) 0, (byte) (getHeight() - 1)});
 
-        final int[] pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
-        for (int i = 0; i < pixels.length; i++) {
-            final int p = pixels[i];
-            // Pack RGB888 to RGB565 and swap to Big-Endian for SPI
-            final short packed = (short) ((((p >> 19) & 0x1F) << 11) | (((p >> 10) & 0x3F) << 5) | ((p >> 3) & 0x1F));
-            imageSegment.set(ValueLayout.JAVA_SHORT_UNALIGNED, i * 2, Short.reverseBytes(packed));
-        }
+        packRgb888ToRgb565(image);
 
-        writeData(imageSegment);
+        writeData(getImageSegment());
         writeCommand(new byte[]{NO_OP});
+    }
+
+    /**
+     * Maps a sub-region of a {@link BufferedImage} to RGB565 and renders it to a specific window on the display (dirty write).
+     *
+     * @param image Source BufferedImage.
+     * @param x Destination window X start coordinate.
+     * @param y Destination window Y start coordinate.
+     * @param width Window width.
+     * @param height Window height.
+     */
+    @Override
+    public final void drawImage(final BufferedImage image, final int x, final int y, final int width, final int height) {
+        setWindow(x, y, width, height);
+        final var pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
+        final var imgWidth = image.getWidth();
+
+        var destOffset = 0L;
+        for (var sy = 0; sy < height; sy++) {
+            for (var sx = 0; sx < width; sx++) {
+                final var p = pixels[sy * imgWidth + sx];
+                final var packed = (short) ((((p >> 19) & 0x1F) << 11) | (((p >> 10) & 0x3F) << 5) | ((p >> 3) & 0x1F));
+                getImageSegment().set(ValueLayout.JAVA_SHORT_UNALIGNED, destOffset, Short.reverseBytes(packed));
+                destOffset += 2L;
+            }
+        }
+        writeData(getImageSegment().asSlice(0L, (long) width * height * 2L));
+        writeCommand(new byte[]{NO_OP});
+    }
+
+    /**
+     * Sets the active drawing window on the SSD1331 display controller.
+     *
+     * @param x X start coordinate.
+     * @param y Y start coordinate.
+     * @param width Window width.
+     * @param height Window height.
+     */
+    @Override
+    public final void setWindow(final int x, final int y, final int width, final int height) {
+        writeCommand(new byte[]{
+            SET_COLUMN_ADDRESS,
+            (byte) x,
+            (byte) (x + width - 1),
+            SET_ROW_ADDRESS,
+            (byte) y,
+            (byte) (y + height - 1)
+        });
     }
 
     /**
@@ -435,7 +538,6 @@ public class Ssd1331 extends AbstractDevice {
         log.debug("Closing SSD1331 OLED Display");
         try {
             if (getHandle().address() != 0 && getArena().scope().isAlive()) {
-                // Clear active frame structures and cut power to the panel hardware
                 writeCommand(new byte[]{DISPLAY_OFF});
             }
         } catch (final Exception e) {

@@ -1,7 +1,7 @@
 /*
  * Copyright (c) Steven P. Goldsmith. All rights reserved.
  */
-package com.codeferm.periphery.ssd1331.demo;
+package com.codeferm.periphery.display.demo;
 
 import java.awt.Color;
 import java.awt.Font;
@@ -17,19 +17,15 @@ import picocli.CommandLine.Command;
 /**
  * Centipede clone.
  * <p>
- * A high-fidelity recreation of the Atari classic logic, optimized for SSD1331 OLED displays. Features include:
- * <ul>
- * <li>Player Area Rebound (y=40 to y=58).</li>
- * <li>Persistent extra head spawning for uncleared bottom zones.</li>
- * <li>Mushroom drop balancing and spider "gardening" logic.</li>
- * </ul>
+ * A high-fidelity recreation of the Atari classic logic, optimized for unified color display hardware with dynamic scaling.
  *
  * @author Steven P. Goldsmith
  * @version 1.0.0
  * @since 1.0.0
  */
 @Slf4j
-@Command(name = "CentipedeColor", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT")
+@Command(name = "CentipedeColor", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
+        description = "Centipede clone for color displays")
 public class CentipedeColor extends Base {
 
     /**
@@ -50,21 +46,13 @@ public class CentipedeColor extends Base {
     private GameState currentState = GameState.PLAYING;
 
     /**
-     * Display width in pixels.
+     * Top boundary fraction of the player's movement area.
      */
-    private static final int SCREEN_W = 96;
+    private static final float PLAYER_AREA_TOP_RATIO = 0.625f;
     /**
-     * Display height in pixels.
+     * Bottom-most row fraction for centipede movement.
      */
-    private static final int SCREEN_H = 64;
-    /**
-     * Top boundary of the player's movement area.
-     */
-    private static final int PLAYER_AREA_TOP = 40;
-    /**
-     * Bottom-most row for centipede movement.
-     */
-    private static final int BOTTOM_ROW = 58;
+    private static final float BOTTOM_ROW_RATIO = 0.906f;
 
     /**
      * Base movement speed of the centipede, scales with wave.
@@ -82,6 +70,14 @@ public class CentipedeColor extends Base {
      * Current player horizontal velocity.
      */
     private float playerVX = 0;
+
+    /**
+     * Scale factor for sprites based on screen resolution (baseline 96x64).
+     */
+    private float spriteScale = 1.0f;
+    private int scaledBaseSize = 6;
+    private int scaledSpiderWidth = 8;
+    private int scaledSpiderHeight = 8;
 
     /**
      * Active player projectile, null if none.
@@ -189,11 +185,14 @@ public class CentipedeColor extends Base {
             return;
         }
 
+        final var screenW = getWidth();
+        final var playerAreaTop = (int) (getHeight() * PLAYER_AREA_TOP_RATIO);
+        final var bottomRow = (int) (getHeight() * BOTTOM_ROW_RATIO);
+
         if (centipedeChains.isEmpty()) {
             wave++;
             baseCentipedeSpeed += 4.0f;
             spawnCentipede();
-            // Implement the swarm penalty: extra heads for each segment that reached the bottom
             for (var i = 0; i < segmentsReachedBottom; i++) {
                 spawnExtraHead();
             }
@@ -201,12 +200,12 @@ public class CentipedeColor extends Base {
         }
 
         updateCombat(dt);
-        updateCentipedes(dt);
+        updateCentipedes(dt, screenW, playerAreaTop, bottomRow);
         updateSpider(dt);
 
-        var targetX = SCREEN_W / 2.0f;
+        var targetX = screenW / 2.0f;
         if (spider != null) {
-            targetX = spider.x + 4;
+            targetX = spider.x + (scaledBaseSize / 2.0f);
         } else if (!centipedeChains.isEmpty()) {
             Segment lowest = null;
             for (final var chain : centipedeChains) {
@@ -223,7 +222,7 @@ public class CentipedeColor extends Base {
 
         movePlayer(targetX, dt);
         if (playerShot == null) {
-            playerShot = new Projectile(playerX + 2, playerY - 2);
+            playerShot = new Projectile(playerX + (scaledBaseSize / 2.0f) - 0.5f, playerY - 2.0f);
         }
         checkCollisions();
     }
@@ -232,16 +231,19 @@ public class CentipedeColor extends Base {
      * Updates centipede movement, including wall bouncing and player area rebound.
      *
      * @param dt Delta time.
+     * @param screenW Screen width.
+     * @param playerAreaTop Player area top threshold.
+     * @param bottomRow Bottom row threshold.
      */
-    private void updateCentipedes(final float dt) {
+    private void updateCentipedes(final float dt, final int screenW, final int playerAreaTop, final int bottomRow) {
         for (final var chain : centipedeChains) {
             for (final var s : chain) {
                 final var nextX = s.x + (s.dx * baseCentipedeSpeed * dt);
-                var turn = (nextX <= 0 && s.dx < 0) || (nextX >= SCREEN_W - 6 && s.dx > 0);
+                var turn = (nextX <= 0 && s.dx < 0) || (nextX >= screenW - scaledBaseSize && s.dx > 0);
 
                 if (!turn) {
                     for (final var m : mushrooms) {
-                        if (Math.abs(nextX - m.x) < 5 && Math.abs(s.y - m.y) < 5) {
+                        if (Math.abs(nextX - m.x) < scaledBaseSize && Math.abs(s.y - m.y) < scaledBaseSize) {
                             turn = true;
                             break;
                         }
@@ -251,13 +253,13 @@ public class CentipedeColor extends Base {
                 if (turn) {
                     s.dx = -s.dx;
                     if (s.isRising) {
-                        s.y -= 6;
-                        if (s.y <= PLAYER_AREA_TOP) {
+                        s.y -= scaledBaseSize;
+                        if (s.y <= playerAreaTop) {
                             s.isRising = false;
                         }
                     } else {
-                        s.y += 6;
-                        if (s.y >= BOTTOM_ROW) {
+                        s.y += scaledBaseSize;
+                        if (s.y >= bottomRow) {
                             s.isRising = true;
                             segmentsReachedBottom++;
                         }
@@ -274,7 +276,8 @@ public class CentipedeColor extends Base {
      */
     private void spawnExtraHead() {
         final var headChain = new ArrayList<Segment>();
-        final var s = new Segment(random.nextInt(SCREEN_W - 6), BOTTOM_ROW, true);
+        final var bottomRow = (int) (getHeight() * BOTTOM_ROW_RATIO);
+        final var s = new Segment(random.nextInt(getWidth() - scaledBaseSize), bottomRow, true);
         s.isRising = true;
         headChain.add(s);
         centipedeChains.add(headChain);
@@ -292,7 +295,8 @@ public class CentipedeColor extends Base {
         playerShot.y -= 280.0f * dt;
         var hit = false;
 
-        if (spider != null && Math.abs(playerShot.x - (spider.x + 4)) < 6 && Math.abs(playerShot.y - (spider.y + 4)) < 6) {
+        if (spider != null && Math.abs(playerShot.x - (spider.x + (scaledSpiderWidth / 2.0f))) < scaledBaseSize
+                && Math.abs(playerShot.y - (spider.y + (scaledSpiderHeight / 2.0f))) < scaledBaseSize) {
             spider = null;
             score += 600;
             hit = true;
@@ -302,7 +306,8 @@ public class CentipedeColor extends Base {
             final var it = mushrooms.iterator();
             while (it.hasNext()) {
                 final var m = it.next();
-                if (playerShot.x >= m.x - 1 && playerShot.x <= m.x + 6 && playerShot.y >= m.y && playerShot.y <= m.y + 6) {
+                if (playerShot.x >= m.x - 1 && playerShot.x <= m.x + scaledBaseSize
+                        && playerShot.y >= m.y && playerShot.y <= m.y + scaledBaseSize) {
                     m.health--;
                     score += 5;
                     hit = true;
@@ -321,7 +326,8 @@ public class CentipedeColor extends Base {
                 final var chain = chainIt.next();
                 for (var j = 0; j < chain.size(); j++) {
                     final var s = chain.get(j);
-                    if (Math.abs(playerShot.x - (s.x + 3)) < 6 && Math.abs(playerShot.y - (s.y + 3)) < 6) {
+                    if (Math.abs(playerShot.x - (s.x + (scaledBaseSize / 2.0f))) < scaledBaseSize
+                            && Math.abs(playerShot.y - (s.y + (scaledBaseSize / 2.0f))) < scaledBaseSize) {
                         if (random.nextInt(3) == 0) {
                             mushrooms.add(new Mushroom((int) s.x, (int) s.y));
                         }
@@ -363,8 +369,8 @@ public class CentipedeColor extends Base {
             playerVX = 0;
         }
         playerX += playerVX * dt;
-        playerX = Math.max(2, Math.min(SCREEN_W - 8, playerX));
-        playerY = SCREEN_H - 8;
+        playerX = Math.max(2, Math.min(getWidth() - scaledBaseSize - 2, playerX));
+        playerY = getHeight() - scaledBaseSize - 2;
     }
 
     /**
@@ -372,54 +378,76 @@ public class CentipedeColor extends Base {
      */
     private void spawnCentipede() {
         final var startChain = new ArrayList<Segment>();
-        final var startX = SCREEN_W / 2.0f;
+        final var startX = getWidth() / 2.0f;
         for (var i = 0; i < 12; i++) {
-            startChain.add(new Segment(startX - (i * 6), 10, i == 0));
+            startChain.add(new Segment(startX - (i * scaledBaseSize), 10.0f + scaledBaseSize, i == 0));
         }
         centipedeChains.add(startChain);
     }
 
     /**
-     * Initializes all bitmap sprites for game entities.
+     * Calculates scaling parameters based on display dimensions.
      */
-    private void initSprites() {
-        mushSprite = createBitmap(6, new int[][]{{0, 1, 1, 1, 1, 0}, {1, 1, 2, 2, 1, 1}, {1, 2, 2, 2, 2, 1}, {1, 1, 1, 1, 1, 1}, {0,
-            0, 2, 2, 0, 0}, {0, 0, 2, 2, 0, 0}}, Color.GREEN, Color.RED);
-        mushDamaged1 = createBitmap(6, new int[][]{{0, 1, 0, 1, 1, 0}, {1, 1, 2, 0, 1, 1}, {1, 0, 2, 2, 0, 1}, {1, 1, 0, 1, 1, 1}, {
-            0, 0, 2, 2, 0, 0}, {0, 0, 2, 2, 0, 0}}, Color.GREEN, Color.RED);
-        mushDamaged2 = createBitmap(6, new int[][]{{0, 0, 0, 1, 1, 0}, {0, 1, 2, 0, 0, 1}, {0, 0, 0, 2, 0, 0}, {1, 1, 0, 0, 1, 1}, {
-            0, 0, 2, 0, 0, 0}, {0, 0, 2, 2, 0, 0}}, Color.YELLOW, Color.RED);
-        headSprite = createBitmap(6, new int[][]{{0, 1, 1, 1, 1, 0}, {1, 2, 1, 1, 2, 1}, {1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1}, {0,
-            1, 1, 1, 1, 0}, {1, 0, 1, 1, 0, 1}}, Color.GREEN, Color.RED);
-        bodySprite = createBitmap(6, new int[][]{{0, 1, 1, 1, 1, 0}, {1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1}, {0,
-            1, 1, 1, 1, 0}, {0, 0, 0, 0, 0, 0}}, Color.GREEN, null);
-        spiderSprite = createBitmap(8, new int[][]{{1, 0, 1, 0, 0, 1, 0, 1}, {0, 1, 0, 1, 1, 0, 1, 0}, {1, 1, 1, 1, 1, 1, 1, 1}, {0,
-            1, 1, 1, 1, 1, 1, 0}, {0, 1, 1, 1, 1, 1, 1, 0}, {1, 1, 1, 1, 1, 1, 1, 1}, {0, 1, 0, 1, 1, 0, 1, 0},
-        {1, 0, 1, 0, 0, 1, 0, 1}}, Color.WHITE, null);
-        shooterSprite = createBitmap(6, new int[][]{{0, 0, 1, 1, 0, 0}, {0, 1, 1, 1, 1, 0}, {1, 1, 2, 2, 1, 1}, {1, 1, 1, 1, 1, 1},
-        {1, 1, 1, 1, 1, 1}, {1, 0, 1, 1, 0, 1}}, Color.WHITE, Color.RED);
+    private void calculateScaling() {
+        final var screenW = getWidth();
+        // Base scale targets a 96x64 display. Scales up smoothly for 240x240 or higher.
+        spriteScale = Math.max(1.0f, Math.min(screenW / 96.0f, 3.0f));
+        scaledBaseSize = Math.max(6, (int) (6 * spriteScale));
+        scaledSpiderWidth = Math.max(8, (int) (8 * spriteScale));
+        scaledSpiderHeight = Math.max(8, (int) (8 * spriteScale));
     }
 
     /**
-     * Helper to generate a BufferedImage from a small integer array.
+     * Initializes all bitmap sprites for game entities with dynamic scaling.
+     */
+    private void initSprites() {
+        calculateScaling();
+
+        mushSprite = createScaledBitmap(6, 6, new int[][]{{0, 1, 1, 1, 1, 0}, {1, 1, 2, 2, 1, 1}, {1, 2, 2, 2, 2, 1},
+        {1, 1, 1, 1, 1, 1}, {0, 0, 2, 2, 0, 0}, {0, 0, 2, 2, 0, 0}}, Color.GREEN, Color.RED);
+        mushDamaged1 = createScaledBitmap(6, 6, new int[][]{{0, 1, 0, 1, 1, 0}, {1, 1, 2, 0, 1, 1}, {1, 0, 2, 2, 0, 1},
+        {1, 1, 0, 1, 1, 1}, {0, 0, 2, 2, 0, 0}, {0, 0, 2, 2, 0, 0}}, Color.GREEN, Color.RED);
+        mushDamaged2 = createScaledBitmap(6, 6, new int[][]{{0, 0, 0, 1, 1, 0}, {0, 1, 2, 0, 0, 1}, {0, 0, 0, 2, 0, 0},
+        {1, 1, 0, 0, 1, 1}, {0, 0, 2, 0, 0, 0}, {0, 0, 2, 2, 0, 0}}, Color.YELLOW, Color.RED);
+        headSprite = createScaledBitmap(6, 6, new int[][]{{0, 1, 1, 1, 1, 0}, {1, 2, 1, 1, 2, 1}, {1, 1, 1, 1, 1, 1},
+        {1, 1, 1, 1, 1, 1}, {0, 1, 1, 1, 1, 0}, {1, 0, 1, 1, 0, 1}}, Color.GREEN, Color.RED);
+        bodySprite = createScaledBitmap(6, 6, new int[][]{{0, 1, 1, 1, 1, 0}, {1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1},
+        {1, 1, 1, 1, 1, 1}, {0, 1, 1, 1, 1, 0}, {0, 0, 0, 0, 0, 0}}, Color.GREEN, null);
+        spiderSprite = createScaledBitmap(8, 8, new int[][]{{1, 0, 1, 0, 0, 1, 0, 1}, {0, 1, 0, 1, 1, 0, 1, 0},
+        {1, 1, 1, 1, 1, 1, 1, 1}, {0, 1, 1, 1, 1, 1, 1, 0}, {0, 1, 1, 1, 1, 1, 1, 0}, {1, 1, 1, 1, 1, 1, 1, 1},
+        {0, 1, 0, 1, 1, 0, 1, 0}, {1, 0, 1, 0, 0, 1, 0, 1}}, Color.WHITE, null);
+        shooterSprite = createScaledBitmap(6, 6, new int[][]{{0, 0, 1, 1, 0, 0}, {0, 1, 1, 1, 1, 0}, {1, 1, 2, 2, 1, 1},
+        {1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1}, {1, 0, 1, 1, 0, 1}}, Color.WHITE, Color.RED);
+    }
+
+    /**
+     * Helper to generate a dynamically scaled BufferedImage from a template array using nearest-neighbor scaling.
      *
-     * @param size Width and height.
-     * @param data Binary-style data (1 for color1, 2 for color2).
+     * @param origW Original template width.
+     * @param origH Original template height.
+     * @param data Template data grid.
      * @param c1 Primary color.
      * @param c2 Secondary color.
-     * @return Generated BufferedImage.
+     * @return Scaled BufferedImage.
      */
-    private BufferedImage createBitmap(final int size, final int[][] data, final Color c1, final Color c2) {
-        final var img = new BufferedImage(size, size, BufferedImage.TYPE_INT_RGB);
-        for (var y = 0; y < size; y++) {
-            for (var x = 0; x < size; x++) {
-                if (data[y][x] == 1) {
+    private BufferedImage createScaledBitmap(final int origW, final int origH, final int[][] data, final Color c1, final Color c2) {
+        final var targetW = (origW == 6) ? scaledBaseSize : scaledSpiderWidth;
+        final var targetH = (origH == 6) ? scaledBaseSize : scaledSpiderHeight;
+        final var img = new BufferedImage(targetW, targetH, BufferedImage.TYPE_INT_RGB);
+        final var g2d = img.createGraphics();
+
+        for (var y = 0; y < targetH; y++) {
+            for (var x = 0; x < targetW; x++) {
+                final var srcX = x * origW / targetW;
+                final var srcY = y * origH / targetH;
+                if (data[srcY][srcX] == 1) {
                     img.setRGB(x, y, c1.getRGB());
-                } else if (data[y][x] == 2 && c2 != null) {
+                } else if (data[srcY][srcX] == 2 && c2 != null) {
                     img.setRGB(x, y, c2.getRGB());
                 }
             }
         }
+        g2d.dispose();
         return img;
     }
 
@@ -431,8 +459,9 @@ public class CentipedeColor extends Base {
     private void updateSpider(final float dt) {
         if (spider == null) {
             if (random.nextInt(180) == 0) {
-                final var sx = random.nextBoolean() ? -10 : SCREEN_W + 10;
-                spider = new Spider(sx, (float) random.nextInt(20) + 32, (sx < 0 ? 1 : -1), 1);
+                final var sx = random.nextBoolean() ? -20.0f : getWidth() + 20.0f;
+                spider = new Spider(sx, (float) random.nextInt((int) (getHeight() * 0.3f)) + (getHeight() * 0.4f),
+                        (sx < 0 ? 1 : -1), 1);
             }
             return;
         }
@@ -443,14 +472,14 @@ public class CentipedeColor extends Base {
         }
         spider.x += spider.vx * 40.0f * dt;
         spider.y += spider.vy * 30.0f * dt;
-        if (spider.y < 32) {
+        if (spider.y < getHeight() * PLAYER_AREA_TOP_RATIO) {
             spider.vy = 1;
         }
-        if (spider.y > SCREEN_H - 8) {
+        if (spider.y > getHeight() - scaledBaseSize - 4) {
             spider.vy = -1;
         }
-        mushrooms.removeIf(m -> Math.abs(spider.x - m.x) < 7 && Math.abs(spider.y - m.y) < 7);
-        if (spider.x < -40 || spider.x > SCREEN_W + 40) {
+        mushrooms.removeIf(m -> Math.abs(spider.x - m.x) < scaledSpiderWidth && Math.abs(spider.y - m.y) < scaledSpiderHeight);
+        if (spider.x < -40 || spider.x > getWidth() + 40) {
             spider = null;
         }
     }
@@ -459,12 +488,12 @@ public class CentipedeColor extends Base {
      * Checks for collision between player and hostile entities.
      */
     private void checkCollisions() {
-        if (spider != null && Math.abs(spider.x - playerX) < 5 && Math.abs(spider.y - playerY) < 5) {
+        if (spider != null && Math.abs(spider.x - playerX) < scaledBaseSize && Math.abs(spider.y - playerY) < scaledBaseSize) {
             loseLife();
         }
         for (final var chain : centipedeChains) {
             for (final var s : chain) {
-                if (Math.abs(s.x - playerX) < 4 && Math.abs(s.y - playerY) < 4) {
+                if (Math.abs(s.x - playerX) < scaledBaseSize && Math.abs(s.y - playerY) < scaledBaseSize) {
                     loseLife();
                     return;
                 }
@@ -485,7 +514,7 @@ public class CentipedeColor extends Base {
     }
 
     /**
-     * Initializes level state.
+     * Initializes level state and evenly distributes mushrooms across the upper/middle playfield.
      *
      * @param fullReset reset all state including score and wave.
      */
@@ -504,26 +533,44 @@ public class CentipedeColor extends Base {
         spider = null;
         playerShot = null;
         segmentsReachedBottom = 0;
-        playerX = SCREEN_W / 2.0f;
-        playerY = SCREEN_H - 8.0f;
+        playerX = getWidth() / 2.0f;
+        playerY = getHeight() - scaledBaseSize - 2.0f;
+
         if (mushrooms.isEmpty()) {
-            for (var i = 0; i < 18; i++) {
-                mushrooms.add(new Mushroom((random.nextInt(14) * 6) + 6, (random.nextInt(7) * 6) + 12));
+            final var screenW = getWidth();
+            final var playfieldH = (int) (getHeight() * PLAYER_AREA_TOP_RATIO);
+            final var cols = Math.max(6, screenW / (scaledBaseSize * 2));
+            final var rows = Math.max(4, playfieldH / (scaledBaseSize * 2));
+
+            // Distribute mushrooms dynamically across the full screen width and upper play area height
+            for (var r = 0; r < rows; r++) {
+                for (var c = 0; c < cols; c++) {
+                    if (random.nextFloat() < 0.45f) { // 45% fill density per grid slot
+                        final var mx = (c * scaledBaseSize * 2) + random.nextInt(scaledBaseSize);
+                        final var my = (r * scaledBaseSize * 2) + (int) (scaledBaseSize * 1.5f) + random.nextInt(scaledBaseSize);
+                        if (my < playfieldH) {
+                            mushrooms.add(new Mushroom(mx, my));
+                        }
+                    }
+                }
             }
         }
     }
 
     /**
-     * Renders the current frame to the OLED display.
+     * Renders the current frame to the display.
      */
     private void render() {
+        final var screenW = getWidth();
+        final var screenH = getHeight();
         final var g = getG2d();
+
         g.setColor(Color.BLACK);
-        g.fillRect(0, 0, SCREEN_W, SCREEN_H);
+        g.fillRect(0, 0, screenW, screenH);
         if (currentState == GameState.GAME_OVER) {
             g.setColor(Color.WHITE);
-            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 10));
-            g.drawString("GAME OVER", 20, 32);
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, Math.max(9, (int) (10 * spriteScale))));
+            g.drawString("GAME OVER", screenW / 2 - 35, screenH / 2);
         } else {
             for (final var m : mushrooms) {
                 final var b = (m.health >= 3) ? mushSprite : (m.health == 2 ? mushDamaged1 : mushDamaged2);
@@ -540,13 +587,14 @@ public class CentipedeColor extends Base {
             g.drawImage(shooterSprite, (int) playerX, (int) playerY, null);
             if (playerShot != null) {
                 g.setColor(Color.WHITE);
-                g.fillRect((int) playerShot.x, (int) playerShot.y, 1, 3);
+                g.fillRect((int) playerShot.x, (int) playerShot.y, Math.max(1, (int) (1 * spriteScale)), Math.max(3, (int) (3
+                        * spriteScale)));
             }
-            g.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 7));
+            g.setFont(new Font(Font.MONOSPACED, Font.PLAIN, Math.max(7, (int) (7 * spriteScale))));
             g.setColor(Color.CYAN);
-            g.drawString(String.format("%05d L:%01d W:%d", score, lives, wave), 2, 7);
+            g.drawString(String.format("%05d L:%01d W:%d", score, lives, wave), 2, Math.max(8, (int) (8 * spriteScale)));
         }
-        getOled().drawImage(getImage());
+        getDisplay().drawImage(getImage());
     }
 
     @Override

@@ -1,11 +1,10 @@
 /*
  * Copyright (c) Steven P. Goldsmith. All rights reserved.
  */
-package com.codeferm.periphery.ssd1331.demo;
+package com.codeferm.periphery.display.demo;
 
-import com.codeferm.periphery.device.Ssd1331;
+import com.codeferm.periphery.device.AbstractColorDisplay;
 import java.awt.Color;
-import java.awt.Graphics2D;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
@@ -15,10 +14,11 @@ import picocli.CommandLine.Model.CommandSpec;
 import picocli.CommandLine.Spec;
 
 /**
- * 3D Wireframe Cube for SSD1331 with phasing color transitions using FFM.
+ * 3D Wireframe Cube supporting multiple displays with phasing color transitions using FFM.
  * <p>
  * This demo renders a rotating 3D cube that smoothly cycles through colors (Red -> Green -> Blue) using sine-wave oscillators. It
- * utilizes {@code Base} class resources for frame preparation and pushes to the SSD1331 hardware via zero-allocation FFM segments.
+ * utilizes {@code Base} class resources for frame preparation and pushes frames to the display hardware via zero-allocation FFM
+ * segments.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -27,7 +27,7 @@ import picocli.CommandLine.Spec;
  */
 @Slf4j
 @Command(name = "WireframeCube", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
-        description = "Bouncing 3D cube with phasing colors for SSD1331")
+        description = "Bouncing 3D cube with phasing colors for color displays")
 public class WireframeCube extends Base {
 
     /**
@@ -80,9 +80,9 @@ public class WireframeCube extends Base {
     /**
      * Main animation loop for the rotating, bouncing, and color-phasing cube.
      *
-     * @param oled SSD1331 driver instance.
+     * @param display Unified display driver instance.
      */
-    public final void drawCube(final Ssd1331 oled) {
+    public final void drawCube(final AbstractColorDisplay display) {
         final var screenW = getWidth();
         final var screenH = getHeight();
         final var g2d = getG2d();
@@ -104,7 +104,7 @@ public class WireframeCube extends Base {
 
         log.info("Starting Phasing Wireframe Cube at {} FPS", getFps());
 
-        while (true) {
+        while (!Thread.currentThread().isInterrupted() && isRunning()) {
             final var startTime = System.nanoTime();
 
             // Clear background to black
@@ -169,7 +169,7 @@ public class WireframeCube extends Base {
             }
 
             // Flush buffer to hardware via FFM segment in Base
-            oled.drawImage(getImage());
+            display.drawImage(getImage());
 
             // Update rotation and position
             angleX += 0.035;
@@ -202,8 +202,9 @@ public class WireframeCube extends Base {
             if (sleepTime > 0) {
                 try {
                     Thread.sleep(sleepTime / 1_000_000, (int) (sleepTime % 1_000_000));
-                } catch (InterruptedException e) {
+                } catch (final InterruptedException e) {
                     Thread.currentThread().interrupt();
+                    log.debug("WireframeCube loop interrupted, exiting gracefully");
                     break;
                 }
             }
@@ -220,7 +221,7 @@ public class WireframeCube extends Base {
      * @throws Exception If hardware initialization fails.
      */
     @Override
-    public Integer call() throws Exception {
+    public final Integer call() throws Exception {
         // Use spec to detect if the user explicitly provided -f/--fps
         final var fpsMatched = spec.commandLine().getParseResult().hasMatchedOption("fps");
 
@@ -230,8 +231,11 @@ public class WireframeCube extends Base {
         }
 
         super.call();
-        drawCube(getOled());
-        done();
+        try {
+            drawCube(getDisplay());
+        } finally {
+            done();
+        }
         return 0;
     }
 

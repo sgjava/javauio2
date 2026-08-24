@@ -9,60 +9,27 @@ code. Just pass in --help to get list of command line arguments. Make sure demo2
 
 * `java -cp "demo2-1.0.0-SNAPSHOT-jar-with-dependencies.jar" --enable-native-access=ALL-UNNAMED com.codeferm.periphery.demo.GpioOutDemo --help`
 
-## Swift-LCD (ST7789) Demos
+## Color Display Demos (Generic Abstract Architecture)
 
-These demos showcase driving the [Swift-LCD modules](https://github.com/nulllaborg/swift-lcd) (1.3"/2.0" IPS TFT LCD screens over a standard 4-wire SPI bus utilizing the ST7789 driver IC) via the **Java Foreign Function & Memory (FFM) API**.
+Color display demos now work generically across supported display types using an **abstract color display class (`AbstractColorDisplay`)** architecture. Core application logic and demos are entirely decoupled from specific hardware implementations, utilizing zero-allocation framebuffers and high-performance FFM memory segments.
 
-### Dirty-Rectangle Partial Screen Updates
-Instead of repainting and pushing the entire 240x240 or 240x320 framebuffer every frame, this architecture maximizes performance by optimizing SPI bus traffic.
-* **How it works**: The system tracks the bounding boxes of moving entities (e.g., player, invaders, projectiles, explosions, score areas). It restores the background, redraws only the active elements, and pushes only the minimal changed rectangular window(s) to the display via SPI.
-* **Best for**: Games and dynamic UIs where only small portions of the screen change, significantly lowering CPU load and SPI bandwidth requirements.
+### Supported Color Display Modules
+* **Swift-LCD (ST7789):** 1.3"/2.0" IPS TFT LCD screens over a standard 4-wire SPI bus utilizing the ST7789 driver IC.
+* **SSD1331 OLED:** High-performance full-color OLED displays utilizing RGB565 color mapping and hardware-accelerated buffers.
 
-* SpaceInvaders.java: A fully playable Space Invaders port for the ST7789, serving as a masterclass in dirty-rectangle rendering, fluid AI momentum logic, and partial FFM screen updates.
+More on the way.
 
-## Run Swift-LCD Periphery demos
+### Graphic Accelerator Commands (GAC) & Software Fallbacks
+Hardware acceleration is implemented directly at the display driver level where supported (such as GAC features on the SSD1331). For displays that do not natively support hardware acceleration (such as the ST7789), transparent software fallbacks are provided, ensuring consistent API usage and drawing capabilities across all hardware modules.
+
+## Run Color Display Demos
  To see a list of demos 
-[browse](https://github.com/sgjava/javauio2/tree/main/demo2/src/main/java/com/codeferm/periphery/st7789/demo)
+[browse](https://github.com/sgjava/javauio2/tree/main/demo2/src/main/java/com/codeferm/periphery/display/demo)
 code. Just pass in --help to get list of command line arguments. Make sure demo2-1.0.0-SNAPSHOT-jar-with-dependencies.jar is in the current directory.
 
-## SSD1331 Java Demos: Rendering Architectures
-
-This showcases high-performance OLED manipulation using the **Java Foreign Function & Memory (FFM) API**. Each demo utilizes a different architectural approach to balance CPU load, bus traffic, and graphical complexity.
-
-![SpaceInvaders](images/SpaceInvaders1331.png)
-
-![WireframeCube](images/WireframeCube1331.png)
-
-### 1. Java2D Demos (Buffered Graphics)
-These demos utilize the standard `java.awt.Graphics2D` API. This is the most flexible approach, allowing for complex vector graphics, anti-aliasing, and image manipulation.
-* **How it works**: Frames are rendered into a `BufferedImage` in system RAM. The driver then performs a high-speed conversion of the 32-bit `INT_ARGB` buffer into a 16-bit `RGB565` byte stream, which is sent via a single SPI transaction.
-* **Best for**: Complex UI elements, fonts, and cross-platform graphical logic.
-* **Snapshot**: Automatic; the `BufferedImage` serves as the primary data source.
-
-### 2. GAC Demos (Hardware Accelerated)
-These demos leverage the SSD1331's internal **Graphic Accelerator Commands (GAC)** to perform drawing operations directly on the display controller's silicon.
-* **How it works**: Instead of calculating pixels in Java, the driver sends high-level instructions (e.g., `DRAW_LINE`, `DRAW_RECTANGLE`, `COPY_WINDOW`). This significantly reduces SPI bus traffic and offloads the heavy lifting from the Raspberry Pi’s CPU to the OLED chip.
-* **Best for**: Geometric patterns, scrolling, and windowing operations where CPU efficiency is critical.
-
-### 3. Native Push Demos (Raw Framebuffers)
-The "Native Push" approach (as seen in the **Boing** demo) represents the highest tier of performance, bypassing higher-level APIs for a direct-to-silicon pipeline.
-* **How it works**: A local `byte[]` array is maintained in `RGB565` format. The demo logic manipulates bytes directly with bit-wise operations. The entire 12,288-byte buffer is then "blasted" to the display in one atomic operation using FFM's `MemorySegment`.
-* **Best for**: High-frame-rate simulations, 3D rotations, and flicker-free animations.
-
-### Feature Matrix
-
-| Feature | Java2D | GAC (Hardware) | Native Push |
-| :--- | :--- | :--- | :--- |
-| **Rendering Surface** | JVM Heap (`BufferedImage`) | SSD1331 Internal RAM | JVM Heap (`byte[]`) |
-| **CPU Usage** | Moderate | Very Low | Low-Moderate |
-| **SPI Bus Load** | High (Full Frames) | Low (Commands Only) | High (Full Frames) |
-| **Flicker-Free** | Yes (Double Buffered) | No (Immediate) | Yes (Direct Buffer) |
-| **Snapshot Support** | Native | Not implemented | Not implemented |
-
-## Run SSD1331 Periphery demos
- To see a list of demos 
-[browse](https://github.com/sgjava/javauio2/tree/main/demo2/src/main/java/com/codeferm/periphery/ssd1331/demo)
-code. Just pass in --help to get list of command line arguments. Make sure demo2-1.0.0-SNAPSHOT-jar-with-dependencies.jar is in the current directory.
+* `java -cp "demo2-1.0.0-SNAPSHOT-jar-with-dependencies.jar" --enable-native-access=ALL-UNNAMED com.codeferm.periphery.display.demo.DefenderScroller --help`
+* `java -cp "demo2-1.0.0-SNAPSHOT-jar-with-dependencies.jar" --enable-native-access=ALL-UNNAMED com.codeferm.periphery.display.demo.Perf --display-type SSD1331 -d /dev/spidev1.0 -dc 199 -res 198`
+* `java -cp "demo2-1.0.0-SNAPSHOT-jar-with-dependencies.jar" --enable-native-access=ALL-UNNAMED com.codeferm.periphery.display.demo.CubeDemo --display-type ST7789 -l false`
 
 ## Run U8g2 demos
 To see a list of demos 
@@ -71,6 +38,7 @@ code. Just pass in --help to get list of command line arguments. Make sure demo2
 
 * `java -cp "demo2-1.0.0-SNAPSHOT-jar-with-dependencies.jar" --enable-native-access=ALL-UNNAMED com.codeferm.u8g2.demo.SimpleText --help`
 * `java -cp "demo2-1.0.0-SNAPSHOT-jar-with-dependencies.jar" --enable-native-access=ALL-UNNAMED com.codeferm.u8g2.demo.SimpleText --setup ssd1306_i2c_128x64_noname_f --type I2CHW --bus 1`
+
 ### U8g2 Demo Suite: Beyond the Basics
 
 This collection of demos demonstrates the high-performance FFM bindings of JavaUIO, moving from simple text to complex real-time graphics and system monitoring.

@@ -1,9 +1,11 @@
 /*
  * Copyright (c) Steven P. Goldsmith. All rights reserved.
  */
-package com.codeferm.periphery.ssd1331.demo;
+package com.codeferm.periphery.display.demo;
 
-import com.codeferm.periphery.device.Ssd1331;
+import com.codeferm.periphery.device.AbstractColorDisplay;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
@@ -11,10 +13,10 @@ import picocli.CommandLine;
 import picocli.CommandLine.Command;
 
 /**
- * High-performance, flicker-free Amiga Boing Ball recreation for SSD1331.
+ * High-performance, flicker-free 3D Boing Ball recreation supporting multiple displays.
  * <p>
- * Implements a software-buffered rendering pipeline to eliminate artifacts and blinking. The entire 96x64 frame is assembled in a
- * local RGB565 buffer and transmitted via a single atomic SPI transaction.
+ * Implements a software-buffered rendering pipeline adaptable to any display dimensions, automatically scaling the ball, grid, and
+ * sending frames via FFM memory segments without controller-specific checks.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -31,63 +33,29 @@ import picocli.CommandLine.Command;
 public class Boing extends Base {
 
     /**
-     * Display width in pixels.
-     */
-    private static final int WIDTH = 96;
-    /**
-     * Display height in pixels.
-     */
-    private static final int HEIGHT = 64;
-    /**
-     * Ball diameter in pixels.
-     */
-    private static final int BALL_SIZE = 22;
-    /**
-     * Ball radius for calculation.
-     */
-    private static final int RADIUS = BALL_SIZE / 2;
-    /**
      * Bytes per pixel (RGB565).
      */
     private static final int BYTES_PER_PIXEL = 2;
 
     /**
-     * * Software Framebuffer (12,288 bytes). Well within the 64K SPI buffer to allow a single atomic write.
+     * Software Framebuffer (dynamically sized based on display).
      */
-    private final byte[] frameBuffer = new byte[WIDTH * HEIGHT * BYTES_PER_PIXEL];
+    private byte[] frameBuffer;
 
-    /**
-     * Horizontal position.
-     */
-    private double ballX = 48.0;
-    /**
-     * Vertical position.
-     */
-    private double ballY = 20.0;
-    /**
-     * Horizontal velocity.
-     */
+    private int displayWidth;
+    private int displayHeight;
+    private int radius;
+
+    private double ballX;
+    private double ballY;
     private double velX = 1.4;
-    /**
-     * Vertical velocity.
-     */
     private double velY = 0.0;
-    /**
-     * Gravity constant.
-     */
     private final double gravity = 0.12;
-    /**
-     * Elasticity/Bounce coefficient.
-     */
     private final double bounce = -0.88;
-    /**
-     * Rotation phase in radians.
-     */
     private double phase = 0.0;
 
     /**
-     * Initializes the background grid directly into the software buffer. Uses RGB565 format (5 bits Red, 6 bits Green, 5 bits
-     * Blue).
+     * Initializes the background grid directly into the software buffer.
      */
     private void renderGrid() {
         Arrays.fill(frameBuffer, (byte) 0);
@@ -95,10 +63,10 @@ public class Boing extends Base {
         final var high = (byte) 0x10;
         final var low = (byte) 0x82;
 
-        for (var y = 0; y < HEIGHT; y++) {
-            for (var x = 0; x < WIDTH; x++) {
+        for (var y = 0; y < displayHeight; y++) {
+            for (var x = 0; x < displayWidth; x++) {
                 if (x % 16 == 0 || y % 16 == 0) {
-                    final var idx = (y * WIDTH + x) * BYTES_PER_PIXEL;
+                    final var idx = (y * displayWidth + x) * BYTES_PER_PIXEL;
                     frameBuffer[idx] = high;
                     frameBuffer[idx + 1] = low;
                 }
@@ -116,10 +84,10 @@ public class Boing extends Base {
      * @param b Blue component (0-31).
      */
     private void setPixel(final int x, final int y, final int r, final int g, final int b) {
-        if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT) {
+        if (x < 0 || x >= displayWidth || y < 0 || y >= displayHeight) {
             return;
         }
-        final var idx = (y * WIDTH + x) * BYTES_PER_PIXEL;
+        final var idx = (y * displayWidth + x) * BYTES_PER_PIXEL;
         final var color = ((r & 0x1F) << 11) | ((g & 0x3F) << 5) | (b & 0x1F);
         frameBuffer[idx] = (byte) (color >> 8);
         frameBuffer[idx + 1] = (byte) (color & 0xFF);
@@ -135,8 +103,8 @@ public class Boing extends Base {
         final var shadowOffset = 4;
         final var sx = x + shadowOffset;
         final var sy = y + shadowOffset;
-        final var r2 = RADIUS * RADIUS;
-        for (var iy = -RADIUS; iy <= RADIUS; iy++) {
+        final var r2 = radius * radius;
+        for (var iy = -radius; iy <= radius; iy++) {
             final var hWidth = (int) Math.sqrt(r2 - (iy * iy));
             for (var ix = sx - hWidth; ix <= sx + hWidth; ix++) {
                 setPixel(ix, sy + iy, 0, 0, 0);
@@ -152,12 +120,12 @@ public class Boing extends Base {
      * @param rot Rotation phase in radians.
      */
     private void renderBall(final int x, final int y, final double rot) {
-        final var r2 = (double) RADIUS * RADIUS;
-        for (var iy = -RADIUS; iy < RADIUS; iy++) {
+        final var r2 = (double) radius * radius;
+        for (var iy = -radius; iy < radius; iy++) {
             final var hWidth = Math.sqrt(r2 - (double) (iy * iy));
             final var startX = (int) (x - hWidth);
             final var endX = (int) (x + hWidth);
-            final var lat = Math.asin(iy / (double) RADIUS);
+            final var lat = Math.asin(iy / (double) radius);
             for (var ix = startX; ix <= endX; ix++) {
                 final var dx = ix - x;
                 final var lon = Math.asin(Math.clamp(dx / hWidth, -1.0, 1.0));
@@ -176,43 +144,60 @@ public class Boing extends Base {
     /**
      * Main execution loop for the Boing demo.
      *
-     * @param oled The SSD1331 hardware driver.
+     * @param display The unified display driver instance.
      * @throws Exception If hardware communication fails.
      */
-    public final void runDemo(final Ssd1331 oled) throws Exception {
+    public final void runDemo(final AbstractColorDisplay display) throws Exception {
         log.info("Starting Boing Demo...");
-        oled.setup();
-        // Hardware Remap: 16-bit RGB565 mode
-        oled.writeCommand(new byte[]{(byte) 0xA0, (byte) 0x72});
-        while (!Thread.currentThread().isInterrupted()) {
+
+        displayWidth = display.getWidth();
+        displayHeight = display.getHeight();
+        final var ballSize = Math.min(displayWidth, displayHeight) / 4;
+        radius = ballSize / 2;
+
+        frameBuffer = new byte[displayWidth * displayHeight * BYTES_PER_PIXEL];
+        ballX = displayWidth / 2.0;
+        ballY = displayHeight / 4.0;
+
+        while (!Thread.currentThread().isInterrupted() && isRunning()) {
             final var startTime = System.currentTimeMillis();
+
             // 1. Scene Assembly (RAM only)
             renderGrid();
             renderShadow((int) ballX, (int) ballY);
             renderBall((int) ballX, (int) ballY, phase);
+
             // 2. Physics Update
             ballX += velX;
             velY += gravity;
             ballY += velY;
-            if (ballX < RADIUS || ballX > (WIDTH - 1) - RADIUS) {
+            if (ballX < radius || ballX > (displayWidth - 1) - radius) {
                 velX *= -1;
             }
-            if (ballY > (HEIGHT - 1) - RADIUS) {
-                ballY = (HEIGHT - 1) - RADIUS;
+            if (ballY > (displayHeight - 1) - radius) {
+                ballY = (displayHeight - 1) - radius;
                 velY *= bounce;
                 if (Math.abs(velY) < 1.0) {
                     velY = -2.8;
                 }
             }
             phase += (velX * 0.12);
-            // 3. One-Shot SPI Blast
-            // Define write window: Column 0-95, Row 0-63
-            oled.writeCommand(new byte[]{(byte) 0x15, 0, 95, (byte) 0x75, 0, 63});
-            // Single transaction write of the 12,288 byte buffer
-            oled.writeData(frameBuffer);
+
+            // 3. Controller-Agnostic Display Update
+            display.setWindow(0, 0, displayWidth, displayHeight);
+
+            MemorySegment.copy(frameBuffer, 0, display.getImageSegment(), ValueLayout.JAVA_BYTE, 0, frameBuffer.length);
+            display.writeData(display.getImageSegment());
+
             final var elapsedTime = System.currentTimeMillis() - startTime;
-            if (elapsedTime < 16) {
-                TimeUnit.MILLISECONDS.sleep(16 - elapsedTime);
+            try {
+                if (elapsedTime < 16) {
+                    TimeUnit.MILLISECONDS.sleep(16 - elapsedTime);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.info("Boing demo interrupted, exiting render loop.");
+                break;
             }
         }
     }
@@ -227,7 +212,7 @@ public class Boing extends Base {
     public final Integer call() throws Exception {
         super.call();
         try {
-            runDemo(getOled());
+            runDemo(getDisplay());
         } finally {
             done();
         }

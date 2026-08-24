@@ -1,10 +1,12 @@
 /*
  * Copyright (c) Steven P. Goldsmith. All rights reserved.
  */
-package com.codeferm.periphery.ssd1331.demo;
+package com.codeferm.periphery.display.demo;
 
 import com.codeferm.periphery.NativeLoader;
+import com.codeferm.periphery.device.AbstractColorDisplay;
 import com.codeferm.periphery.device.Ssd1331;
+import com.codeferm.periphery.device.St7789;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.File;
@@ -17,10 +19,10 @@ import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine.Option;
 
 /**
- * Base CLI provider for SSD1331 hardware demonstrations.
+ * Unified base CLI provider for hardware display demonstrations (u8g2 style).
  * <p>
- * Handles FFM (Foreign Function & Memory) native library loading, SPI/GPIO initialization, and provides a Java2D {@link Graphics2D}
- * drawing surface. Implements a robust shutdown sequence to ensure the OLED panel is powered down correctly on exit.
+ * Handles FFM native library loading, SPI/GPIO initialization, and provides a unified Java2D {@link Graphics2D} drawing surface
+ * across different display controllers.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -29,7 +31,7 @@ import picocli.CommandLine.Option;
  */
 @Data
 @Slf4j
-public class Base implements Callable<Integer> {
+public abstract class Base implements Callable<Integer> {
 
     /**
      * Load native periphery libraries for FFM access.
@@ -38,23 +40,29 @@ public class Base implements Callable<Integer> {
         NativeLoader.load();
     }
 
+    @Option(names = {"--display-type"}, description = "Display type (ST7789, SSD1331), ${DEFAULT-VALUE} by default.")
+    private String displayType = "ST7789";
+
     @Option(names = {"-d", "--device"}, description = "SPI device, ${DEFAULT-VALUE} by default.")
     private String device = "/dev/spidev0.0";
 
     @Option(names = {"-m", "--mode"}, description = "SPI mode, ${DEFAULT-VALUE} by default.")
-    private int mode = 3;
+    private int mode = 0;
 
     @Option(names = {"-s", "--speed"}, description = "Max speed in Hz, ${DEFAULT-VALUE} by default.")
-    private int speed = 7000000;
+    private int speed = 32000000;
 
     @Option(names = {"-g", "--gpio-device"}, description = "GPIO device, ${DEFAULT-VALUE} by default.")
     private String gpioDevice = "/dev/gpiochip0";
 
     @Option(names = {"-dc", "--dc-line"}, description = "DC line, ${DEFAULT-VALUE} by default.")
-    private int dc = 24;
+    private int dc = 71;
 
-    @Option(names = {"-res", "--res-line"}, description = "RES line, ${DEFAULT-VALUE} by default.")
+    @Option(names = {"-res", "--res-line"}, description = "RES line (SSD1331 only), ${DEFAULT-VALUE} by default.")
     private int res = 25;
+
+    @Option(names = {"-b", "--buffer-size"}, description = "SPI transfer buffer chunk size in bytes, ${DEFAULT-VALUE} by default.")
+    private int bufferSize = 65536;
 
     @Option(names = {"-f", "--fps"}, description = "Target frames per second, ${DEFAULT-VALUE} by default.")
     private int fps = 60;
@@ -69,9 +77,9 @@ public class Base implements Callable<Integer> {
     private int snapshotTime = 0;
 
     /**
-     * SSD1331 hardware driver instance.
+     * Unified abstract color display driver instance.
      */
-    private Ssd1331 oled;
+    private AbstractColorDisplay display;
 
     /**
      * Off-screen image buffer for Java2D rendering.
@@ -94,12 +102,12 @@ public class Base implements Callable<Integer> {
     private int height;
 
     /**
-     * * Flag to signal rendering loops to terminate. Volatile ensures visibility across timer and shutdown hook threads.
+     * Flag to signal rendering loops to terminate. Volatile ensures visibility across timer and shutdown hook threads.
      */
     private volatile boolean running = true;
 
     /**
-     * Bootstraps hardware and initializes the rendering context.
+     * Bootstraps hardware and initializes the rendering context based on the selected display type.
      * <p>
      * Registers a JVM shutdown hook to handle {@code SIGINT} (Ctrl+C) and schedules an automatic exit task based on
      * {@code runTime}.
@@ -110,16 +118,27 @@ public class Base implements Callable<Integer> {
      */
     @Override
     public Integer call() throws Exception {
-        log.info("Initializing SSD1331 on {} (speed: {}Hz)", device, speed);
-        oled = new Ssd1331(device, mode, speed, gpioDevice, dc, res);
-        width = oled.getWidth();
-        height = oled.getHeight();
+        log.info("Initializing display type {} on {} (speed: {}Hz)", displayType, device, speed);
+
+        if ("ST7789".equalsIgnoreCase(displayType)) {
+            display = new St7789(device, mode, speed, gpioDevice, dc, bufferSize);
+        } else if ("SSD1331".equalsIgnoreCase(displayType)) {
+            display = new Ssd1331(device, mode, speed, gpioDevice, dc, res);
+        } else {
+            throw new IllegalArgumentException("Unknown display type: " + displayType);
+        }
+
+        width = display.getWidth();
+        height = display.getHeight();
+
         // Initialize high-performance off-screen buffer
         final var bufferedImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
         this.image = bufferedImage;
         this.g2d = bufferedImage.createGraphics();
+
         final var mainThread = Thread.currentThread();
         final var scheduler = Executors.newSingleThreadScheduledExecutor();
+
         // Ensures display is turned off even if interrupted via Ctrl+C
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             if (running) {
@@ -128,7 +147,8 @@ public class Base implements Callable<Integer> {
                 mainThread.interrupt();
                 done();
             }
-        }, "SSD1331-Cleanup-Hook"));
+        }, "Display-Cleanup-Hook"));
+
         // Timer to prevent perpetual execution in headless or automated environments
         if (runTime > 0) {
             scheduler.schedule(() -> {
@@ -139,12 +159,14 @@ public class Base implements Callable<Integer> {
                 }
             }, runTime, TimeUnit.SECONDS);
         }
+
         // Snapshot timer to capture the current image buffer to disk
         if (snapshotTime > 0) {
             scheduler.schedule(() -> {
                 saveSnapshot(String.format("snapshot_%ds.png", snapshotTime));
             }, snapshotTime, TimeUnit.SECONDS);
         }
+
         scheduler.shutdown();
         log.info("Display initialized: {}x{}. Auto-exit: {}s, Snapshot: {}s.", width, height, runTime, snapshotTime);
         return 0;
@@ -153,7 +175,7 @@ public class Base implements Callable<Integer> {
     /**
      * Captures the current state of the {@code BufferedImage} and saves it as a PNG.
      *
-     * * @param fileName The name of the file to save.
+     * @param fileName The name of the file to save.
      */
     public void saveSnapshot(final String fileName) {
         try {
@@ -167,25 +189,19 @@ public class Base implements Callable<Integer> {
     }
 
     /**
-     * Executes hardware teardown and releases native resources.
-     * <p>
-     * Sends the {@code 0xAE} (Display OFF) command to the SSD1331 to prevent "burn-in" or image persistence after the process
-     * terminates.
-     * </p>
+     * Executes hardware teardown and releases native resources cleanly across any display controller.
      */
     public void done() {
         synchronized (this) {
-            if (oled != null) {
+            if (display != null) {
                 try {
-                    // Send hardware-level power down command
-                    oled.writeCommand(new byte[]{(byte) 0xAE});
-                    oled.clear();
-                    oled.close();
+                    display.clear();
+                    display.close(); // Automatically triggers controller-specific closeNative()
                     log.info("Hardware resources released.");
                 } catch (final Exception e) {
                     log.error("Cleanup failed: {}", e.getMessage());
                 }
-                oled = null;
+                display = null;
             }
             if (g2d != null) {
                 g2d.dispose();
