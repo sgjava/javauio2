@@ -3,6 +3,7 @@
  */
 package com.codeferm.periphery.display.demo;
 
+import java.awt.Color;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
 import java.io.BufferedInputStream;
@@ -38,22 +39,22 @@ import picocli.CommandLine.Option;
 public class Video extends Base {
 
     /**
-     * Input file path for the raw video data. Defaulted to resource name for JAR deployment.
+     * Input file path for the raw video data. Defaulted dynamically based on display resolution.
      */
     @Option(names = {"--file"}, description = "Input RGB565 file, ${DEFAULT-VALUE} by default.")
-    private String fileName = "color.raw";
+    private String fileName;
 
     /**
-     * Video width option.
+     * Video width option. Defaulted dynamically based on display resolution.
      */
     @Option(names = {"--video-width"}, description = "Video width, ${DEFAULT-VALUE} by default.")
-    private int videoWidth = 96;
+    private Integer videoWidth;
 
     /**
-     * Video height option.
+     * Video height option. Defaulted dynamically based on display resolution.
      */
     @Option(names = {"--video-height"}, description = "Video height, ${DEFAULT-VALUE} by default.")
-    private int videoHeight = 64;
+    private Integer videoHeight;
 
     /**
      * Executes the video playback loop using FFM and display.
@@ -70,6 +71,20 @@ public class Video extends Base {
 
         final var displayWidth = getWidth();
         final var displayHeight = getHeight();
+
+        // Automatically select the best video resolution and file based on display size if not explicitly overridden
+        if (videoWidth == null || videoHeight == null || fileName == null) {
+            if (displayWidth >= 240 && displayHeight >= 135) {
+                videoWidth = 240;
+                videoHeight = 135;
+                fileName = "color240x135.raw";
+            } else {
+                videoWidth = 96;
+                videoHeight = 64;
+                fileName = "color96x64.raw";
+            }
+        }
+
         final var frameSize = videoWidth * videoHeight * 2; // RGB565 uses 2 bytes per pixel
 
         // Optimization: Re-use heap buffer for I/O to avoid GC thrashing
@@ -86,19 +101,26 @@ public class Video extends Base {
         final var videoImage = new BufferedImage(videoWidth, videoHeight, BufferedImage.TYPE_INT_RGB);
         final var imgData = ((DataBufferInt) videoImage.getRaster().getDataBuffer()).getData();
 
+        // Use the Base class internal snapshot buffer directly if available to prevent any performance hit
+        final var snapshotBi = getImage();
+        final var display = getDisplay();
+
+        if (snapshotBi != null) {
+            final var g2d = snapshotBi.createGraphics();
+            g2d.setColor(Color.BLACK);
+            g2d.fillRect(0, 0, displayWidth, displayHeight);
+            g2d.dispose();
+        } else if (offsetX > 0 || offsetY > 0) {
+            final var bgImage = new BufferedImage(displayWidth, displayHeight, BufferedImage.TYPE_INT_RGB);
+            display.drawImage(bgImage, 0, 0, displayWidth, displayHeight);
+        }
+
         try (final var inputStream = getInputStream()) {
             final var frameDurationNs = TimeUnit.SECONDS.toNanos(1) / getFps();
             var frameCount = 0;
             var bytesRead = 0;
 
             final var startTime = System.nanoTime();
-            final var display = getDisplay();
-
-            // Clear display background once if video is smaller than screen
-            if (offsetX > 0 || offsetY > 0) {
-                final var bgImage = new BufferedImage(displayWidth, displayHeight, BufferedImage.TYPE_INT_RGB);
-                display.drawImage(bgImage, 0, 0, displayWidth, displayHeight);
-            }
 
             // readNBytes ensures complete frame capture before transfer
             while (isRunning() && (bytesRead = inputStream.readNBytes(heapBuffer, 0, frameSize)) == frameSize && !Thread.
@@ -122,6 +144,17 @@ public class Video extends Base {
                     final var b = (b5 * 527 + 23) >> 6;
 
                     imgData[i] = (r << 16) | (g << 8) | b;
+                }
+
+                // If snapshot buffer is active, draw directly onto it to eliminate copying overhead
+                if (snapshotBi != null) {
+                    final var g2d = snapshotBi.createGraphics();
+                    if (offsetX > 0 || offsetY > 0 && frameCount == 0) {
+                        g2d.setColor(Color.BLACK);
+                        g2d.fillRect(0, 0, displayWidth, displayHeight);
+                    }
+                    g2d.drawImage(videoImage, offsetX, offsetY, null);
+                    g2d.dispose();
                 }
 
                 // Draw centered frame to display

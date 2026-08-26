@@ -160,7 +160,7 @@ public abstract class Base implements Callable<Integer> {
             }, runTime, TimeUnit.SECONDS);
         }
 
-        // Snapshot timer to capture the current image buffer to disk
+        // Snapshot timer to capture the current image buffer to disk safely
         if (snapshotTime > 0) {
             scheduler.schedule(() -> {
                 saveSnapshot(String.format("snapshot_%ds.png", snapshotTime));
@@ -173,18 +173,28 @@ public abstract class Base implements Callable<Integer> {
     }
 
     /**
-     * Captures the current state of the {@code BufferedImage} and saves it as a PNG.
+     * Captures the current state of the {@code BufferedImage} and saves it as a PNG with thread safety.
      *
      * @param fileName The name of the file to save.
      */
     public void saveSnapshot(final String fileName) {
-        try {
-            final var outputFile = new File(fileName);
-            if (ImageIO.write(image, "png", outputFile)) {
-                log.info("Snapshot saved to: {}", outputFile.getAbsolutePath());
+        synchronized (this) {
+            try {
+                if (image != null) {
+                    final var outputFile = new File(fileName);
+                    // Create parent directories if required
+                    if (outputFile.getParentFile() != null) {
+                        outputFile.getParentFile().mkdirs();
+                    }
+                    if (ImageIO.write(image, "png", outputFile)) {
+                        log.info("Snapshot saved to: {}", outputFile.getAbsolutePath());
+                    }
+                } else {
+                    log.error("Failed to save snapshot: image buffer is null.");
+                }
+            } catch (final Exception e) {
+                log.error("Failed to save snapshot: {}", e.getMessage());
             }
-        } catch (final Exception e) {
-            log.error("Failed to save snapshot: {}", e.getMessage());
         }
     }
 

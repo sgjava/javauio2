@@ -4,9 +4,11 @@
 package com.codeferm.periphery.display.demo;
 
 import com.codeferm.periphery.device.AbstractColorDisplay;
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
-import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine;
@@ -15,8 +17,8 @@ import picocli.CommandLine.Command;
 /**
  * High-performance, flicker-free 3D Boing Ball recreation supporting multiple displays.
  * <p>
- * Implements a software-buffered rendering pipeline adaptable to any display dimensions, automatically scaling the ball, grid, and
- * sending frames via FFM memory segments without controller-specific checks.
+ * Implements an internal buffered rendering pipeline adaptable to any display dimensions, automatically scaling the ball, grid, and
+ * sending frames via FFM memory segments while maintaining compatibility with internal snapshots.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -38,7 +40,7 @@ public class Boing extends Base {
     private static final int BYTES_PER_PIXEL = 2;
 
     /**
-     * Software Framebuffer (dynamically sized based on display).
+     * Software Framebuffer (RGB565 byte array for display FFM transmission).
      */
     private byte[] frameBuffer;
 
@@ -55,71 +57,52 @@ public class Boing extends Base {
     private double phase = 0.0;
 
     /**
-     * Initializes the background grid directly into the software buffer.
+     * Initializes the background grid directly into the internal BufferedImage and frame buffer.
+     *
+     * @param g2d Graphics2D context of the internal image.
      */
-    private void renderGrid() {
-        Arrays.fill(frameBuffer, (byte) 0);
-        // RGB565: Dark Gray (2, 4, 2)
-        final var high = (byte) 0x10;
-        final var low = (byte) 0x82;
+    private final void renderGrid(final Graphics2D g2d) {
+        g2d.setColor(Color.BLACK);
+        g2d.fillRect(0, 0, displayWidth, displayHeight);
 
-        for (var y = 0; y < displayHeight; y++) {
-            for (var x = 0; x < displayWidth; x++) {
-                if (x % 16 == 0 || y % 16 == 0) {
-                    final var idx = (y * displayWidth + x) * BYTES_PER_PIXEL;
-                    frameBuffer[idx] = high;
-                    frameBuffer[idx + 1] = low;
-                }
-            }
+        g2d.setColor(new Color(0x10, 0x82, 0x10)); // Dark Gray/Green grid tone
+        for (var y = 0; y < displayHeight; y += 16) {
+            g2d.drawLine(0, y, displayWidth, y);
+        }
+        for (var x = 0; x < displayWidth; x += 16) {
+            g2d.drawLine(x, 0, x, displayHeight);
         }
     }
 
     /**
-     * Sets a pixel in the local buffer using RGB565 color mapping.
+     * Renders a circular black shadow into the internal image context.
      *
-     * @param x Screen X coordinate.
-     * @param y Screen Y coordinate.
-     * @param r Red component (0-31).
-     * @param g Green component (0-63).
-     * @param b Blue component (0-31).
-     */
-    private void setPixel(final int x, final int y, final int r, final int g, final int b) {
-        if (x < 0 || x >= displayWidth || y < 0 || y >= displayHeight) {
-            return;
-        }
-        final var idx = (y * displayWidth + x) * BYTES_PER_PIXEL;
-        final var color = ((r & 0x1F) << 11) | ((g & 0x3F) << 5) | (b & 0x1F);
-        frameBuffer[idx] = (byte) (color >> 8);
-        frameBuffer[idx + 1] = (byte) (color & 0xFF);
-    }
-
-    /**
-     * Renders a circular black shadow into the software buffer.
-     *
+     * @param g2d Graphics2D context.
      * @param x Center X of the ball.
      * @param y Center Y of the ball.
      */
-    private void renderShadow(final int x, final int y) {
+    private final void renderShadow(final Graphics2D g2d, final int x, final int y) {
         final var shadowOffset = 4;
         final var sx = x + shadowOffset;
         final var sy = y + shadowOffset;
         final var r2 = radius * radius;
+
+        g2d.setColor(Color.BLACK);
         for (var iy = -radius; iy <= radius; iy++) {
             final var hWidth = (int) Math.sqrt(r2 - (iy * iy));
-            for (var ix = sx - hWidth; ix <= sx + hWidth; ix++) {
-                setPixel(ix, sy + iy, 0, 0, 0);
-            }
+            g2d.drawLine(sx - hWidth, sy + iy, sx + hWidth, sy + iy);
         }
     }
 
     /**
-     * Renders a 3D convex checkered ball using spherical coordinate mapping.
+     * Renders a 3D convex checkered ball using spherical coordinate mapping onto the internal buffer.
      *
+     * @param g2d Graphics2D context.
      * @param x Center X coordinate.
      * @param y Center Y coordinate.
      * @param rot Rotation phase in radians.
      */
-    private void renderBall(final int x, final int y, final double rot) {
+    private final void renderBall(final Graphics2D g2d, final int x, final int y, final double rot) {
         final var r2 = (double) radius * radius;
         for (var iy = -radius; iy < radius; iy++) {
             final var hWidth = Math.sqrt(r2 - (double) (iy * iy));
@@ -132,11 +115,38 @@ public class Boing extends Base {
                 final var xSec = (int) Math.floor((lon + rot) / (Math.PI / 4.0)) % 2;
                 final var ySec = (int) Math.floor((lat + (Math.PI / 2.0)) / (Math.PI / 4.0)) % 2;
                 final var isRed = (Math.abs(xSec) == Math.abs(ySec));
+
                 if (isRed) {
-                    setPixel(ix, y + iy, 31, 0, 0); // Red
+                    g2d.setColor(new Color(255, 0, 0)); // Red
                 } else {
-                    setPixel(ix, y + iy, 31, 63, 31); // White
+                    g2d.setColor(Color.WHITE); // White
                 }
+                g2d.fillRect(ix, y + iy, 1, 1);
+            }
+        }
+    }
+
+    /**
+     * Converts the internal ARGB BufferedImage into an RGB565 byte array buffer.
+     *
+     * @param bi Source BufferedImage.
+     * @param dest Destination byte array buffer.
+     * @param width Display width.
+     * @param height Display height.
+     */
+    private final void convertArgbToRgb565(final BufferedImage bi, final byte[] dest, final int width, final int height) {
+        var index = 0;
+        for (var y = 0; y < height; y++) {
+            for (var x = 0; x < width; x++) {
+                final var rgb = bi.getRGB(x, y);
+                final var r = (rgb >> 16) & 0xFF;
+                final var g = (rgb >> 8) & 0xFF;
+                final var b = rgb & 0xFF;
+
+                final var rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+
+                dest[index++] = (byte) (rgb565 >> 8);
+                dest[index++] = (byte) (rgb565 & 0xFF);
             }
         }
     }
@@ -159,33 +169,40 @@ public class Boing extends Base {
         ballX = displayWidth / 2.0;
         ballY = displayHeight / 4.0;
 
+        // Use the Base class internal buffer directly to avoid secondary copy overhead for snapshots
+        final var bi = getImage();
+        final var g2d = getG2d();
+
         while (!Thread.currentThread().isInterrupted() && isRunning()) {
             final var startTime = System.currentTimeMillis();
 
-            // 1. Scene Assembly (RAM only)
-            renderGrid();
-            renderShadow((int) ballX, (int) ballY);
-            renderBall((int) ballX, (int) ballY, phase);
+            synchronized (this) {
+                // 1. Scene Assembly directly on the Base shared buffer image
+                renderGrid(g2d);
+                renderShadow(g2d, (int) ballX, (int) ballY);
+                renderBall(g2d, (int) ballX, (int) ballY, phase);
 
-            // 2. Physics Update
-            ballX += velX;
-            velY += gravity;
-            ballY += velY;
-            if (ballX < radius || ballX > (displayWidth - 1) - radius) {
-                velX *= -1;
-            }
-            if (ballY > (displayHeight - 1) - radius) {
-                ballY = (displayHeight - 1) - radius;
-                velY *= bounce;
-                if (Math.abs(velY) < 1.0) {
-                    velY = -2.8;
+                // 2. Physics Update
+                ballX += velX;
+                velY += gravity;
+                ballY += velY;
+                if (ballX < radius || ballX > (displayWidth - 1) - radius) {
+                    velX *= -1;
                 }
+                if (ballY > (displayHeight - 1) - radius) {
+                    ballY = (displayHeight - 1) - radius;
+                    velY *= bounce;
+                    if (Math.abs(velY) < 1.0) {
+                        velY = -2.8;
+                    }
+                }
+                phase += (velX * 0.12);
+
+                // 3. Convert ARGB image to RGB565 and push to display hardware via FFM
+                convertArgbToRgb565(bi, frameBuffer, displayWidth, displayHeight);
             }
-            phase += (velX * 0.12);
 
-            // 3. Controller-Agnostic Display Update
             display.setWindow(0, 0, displayWidth, displayHeight);
-
             MemorySegment.copy(frameBuffer, 0, display.getImageSegment(), ValueLayout.JAVA_BYTE, 0, frameBuffer.length);
             display.writeData(display.getImageSegment());
 

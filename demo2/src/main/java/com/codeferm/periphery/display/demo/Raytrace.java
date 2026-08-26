@@ -113,6 +113,9 @@ public class Raytrace extends Base {
         final BufferedImage bufferA = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
         final BufferedImage bufferB = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
 
+        // Fetch base snapshot handler image buffer if snapshot flag is enabled
+        final BufferedImage snapshotBi = getImage();
+
         // Background Producer Thread (Raycasting & Pixel Rendering)
         final Thread renderThread = new Thread(() -> {
             var activeBuffer = bufferA;
@@ -266,6 +269,12 @@ public class Raytrace extends Base {
                         }
                         pixels[y * width + x] = rgb;
                     }
+                }
+
+                // If snapshots are enabled, mirror the completed pixel array into the snapshot buffer safely
+                if (snapshotBi != null) {
+                    final var snapPixels = ((DataBufferInt) snapshotBi.getRaster().getDataBuffer()).getData();
+                    System.arraycopy(pixels, 0, snapPixels, 0, pixels.length);
                 }
 
                 try {

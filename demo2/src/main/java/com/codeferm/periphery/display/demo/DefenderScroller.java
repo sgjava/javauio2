@@ -4,6 +4,8 @@
 package com.codeferm.periphery.display.demo;
 
 import com.codeferm.periphery.device.AbstractColorDisplay;
+import java.awt.image.BufferedImage;
+import java.awt.image.DataBufferInt;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.util.Arrays;
@@ -15,7 +17,7 @@ import picocli.CommandLine.Command;
 
 /**
  * High-performance, zero-allocation Defender-style scroller optimized for small color displays (like SSD1331) featuring smooth
- * cosine-interpolated rolling terrain.
+ * cosine-interpolated rolling terrain and synchronized snapshot support.
  *
  * @author Steven P. Goldsmith
  * @version 1.9.0
@@ -85,7 +87,7 @@ public class DefenderScroller extends Base {
      * @param g Green component (0-63).
      * @param b Blue component (0-31).
      */
-    private void setPixel(final int x, final int y, final int r, final int g, final int b) {
+    private final void setPixel(final int x, final int y, final int r, final int g, final int b) {
         if (x < 0 || x >= displayWidth || y < 0 || y >= displayHeight) {
             return;
         }
@@ -106,7 +108,7 @@ public class DefenderScroller extends Base {
      * @param g Green component (0-63).
      * @param b Blue component (0-31).
      */
-    private void drawLine(int x0, int y0, final int x1, final int y1, final int r, final int g, final int b) {
+    private final void drawLine(int x0, int y0, final int x1, final int y1, final int r, final int g, final int b) {
         final var dx = Math.abs(x1 - x0);
         final var dy = Math.abs(y1 - y0);
         final var sx = x0 < x1 ? 1 : -1;
@@ -137,7 +139,7 @@ public class DefenderScroller extends Base {
      * @param width Screen width.
      * @param height Screen height.
      */
-    private void initTerrain(final int width, final int height) {
+    private final void initTerrain(final int width, final int height) {
         terrainWidth = width * 4; // 4 screens wide for seamless looping
         terrain = new int[terrainWidth];
 
@@ -171,7 +173,7 @@ public class DefenderScroller extends Base {
      *
      * @param screenX The screen X column to draw.
      */
-    private void drawColumn(final int screenX) {
+    private final void drawColumn(final int screenX) {
         if (screenX < 0 || screenX >= displayWidth) {
             return;
         }
@@ -202,7 +204,7 @@ public class DefenderScroller extends Base {
      * @param y Vertical center.
      * @param dir Direction (-1 for left, 1 for right).
      */
-    private void drawShip(final int x, final int y, final int dir) {
+    private final void drawShip(final int x, final int y, final int dir) {
         final var r = 0;
         final var g = 63;
         final var b = 63; // Cyan ship
@@ -223,6 +225,30 @@ public class DefenderScroller extends Base {
             if (random.nextBoolean()) {
                 drawLine(x - 6, y, x - 10, y, 63, 15, 0); // Flame on left
             }
+        }
+    }
+
+    /**
+     * Efficiently copies the RGB565 back buffer into the base class BufferedImage backbuffer for snapshot capability.
+     *
+     * @param bi Target BufferedImage.
+     */
+    private final void updateSnapshotBuffer(final BufferedImage bi) {
+        final var raster = bi.getRaster();
+        final var dataBuffer = (DataBufferInt) raster.getDataBuffer();
+        final var pixels = dataBuffer.getData();
+
+        var srcIdx = 0;
+        for (var i = 0; i < pixels.length; i++) {
+            final var high = backBuffer[srcIdx++] & 0xFF;
+            final var low = backBuffer[srcIdx++] & 0xFF;
+            final var rgb565 = (high << 8) | low;
+
+            final var r = ((rgb565 >> 11) & 0x1F) << 3;
+            final var g = ((rgb565 >> 5) & 0x3F) << 2;
+            final var b = (rgb565 & 0x1F) << 3;
+
+            pixels[i] = (0xFF << 24) | (r << 16) | (g << 8) | b;
         }
     }
 
@@ -251,6 +277,7 @@ public class DefenderScroller extends Base {
         viewOffset = 0;
 
         final var backSeg = MemorySegment.ofArray(backBuffer);
+        final var bi = getImage();
 
         while (isRunning() && !Thread.currentThread().isInterrupted()) {
             final var startTime = System.currentTimeMillis();
@@ -285,12 +312,15 @@ public class DefenderScroller extends Base {
                 velocity *= -1;
             }
 
-            // 6. Blast full screen buffer efficiently to hardware
+            // 6. Mirror back buffer into snapshot image buffer efficiently
+            updateSnapshotBuffer(bi);
+
+            // 7. Blast full screen buffer efficiently to hardware
             display.setWindow(0, 0, displayWidth, displayHeight);
             MemorySegment.copy(backSeg, ValueLayout.JAVA_BYTE, 0, display.getImageSegment(), ValueLayout.JAVA_BYTE, 0, bufferSize);
             display.writeData(display.getImageSegment());
 
-            // 7. Frame rate throttling
+            // 8. Frame rate throttling
             final var elapsedTime = System.currentTimeMillis() - startTime;
             final var targetDelay = 1000 / getFps();
 
