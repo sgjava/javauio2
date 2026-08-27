@@ -93,7 +93,7 @@ For target ARM32 boards (such as NanoPi or Raspberry Pi running 32-bit environme
 # Download project
 sudo apt install git
 cd ~/
-git clone --depth 1 [https://github.com/sgoldsmith/javauio2.git](https://github.com/sgoldsmith/javauio2.git)
+git clone --depth 1 https://github.com/sgoldsmith/javauio2.git
 
 # Setup and Install
 cd ~/javauio2/scripts
