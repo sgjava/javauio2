@@ -15,8 +15,8 @@ import org.periphery.Periphery;
  * ST7789 240x320 RGB IPS LCD module driver using Java Foreign Function & Memory (FFM) API, extending {@link AbstractColorDisplay}.
  * <p>
  * This driver provides a high-performance interface to the ST7789 controller, utilizing {@link MemorySegment} for zero-copy data
- * transfers. Optimized with a zero-allocation strategy to prevent memory thrashing and OutOfMemoryErrors in tight loops. It
- * inherits automated safe-teardown from {@link AbstractDevice} and implements pixel and shape drawing via software rasterization.
+ * transfers. Optimized with a zero-allocation strategy to prevent memory thrashing and OutOfMemoryErrors in tight loops. Supports
+ * optional hardware Reset (RST) and Backlight (BL) pins.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -141,8 +141,13 @@ public class St7789 extends AbstractColorDisplay {
      */
     public static final byte NVGAMCTRL = (byte) 0xE1;
 
+    private final MemorySegment rstHandle;
+    private final MemorySegment blHandle;
+    private final boolean hasReset;
+    private final boolean hasBacklight;
+
     /**
-     * Initializes hardware with SPI and GPIO handles via FFM using a default 64KB chunk buffer.
+     * Initializes hardware with SPI and DC pin (no Reset or Backlight).
      *
      * @param device SPI device path.
      * @param mode SPI mode.
@@ -151,11 +156,11 @@ public class St7789 extends AbstractColorDisplay {
      * @param dcPin Data/Command BCM pin number.
      */
     public St7789(final String device, final int mode, final int speed, final String gpioDevice, final int dcPin) {
-        this(device, mode, speed, gpioDevice, dcPin, 65536);
+        this(device, mode, speed, gpioDevice, dcPin, -1, -1, 65536);
     }
 
     /**
-     * Initializes hardware with SPI and GPIO handles via FFM with a configurable buffer size.
+     * Initializes hardware with SPI, DC pin, and custom buffer size (no Reset or Backlight).
      *
      * @param device SPI device path.
      * @param mode SPI mode.
@@ -166,7 +171,45 @@ public class St7789 extends AbstractColorDisplay {
      */
     public St7789(final String device, final int mode, final int speed, final String gpioDevice, final int dcPin,
             final int bufferSize) {
+        this(device, mode, speed, gpioDevice, dcPin, -1, -1, bufferSize);
+    }
+
+    /**
+     * Initializes hardware with SPI, DC pin, Reset pin, and Backlight pin using default buffer size.
+     *
+     * @param device SPI device path.
+     * @param mode SPI mode.
+     * @param speed SPI speed in Hz.
+     * @param gpioDevice GPIO chip path.
+     * @param dcPin Data/Command BCM pin number.
+     * @param rstPin Reset BCM pin number (or -1 if unused).
+     * @param blPin Backlight BCM pin number (or -1 if unused).
+     */
+    public St7789(final String device, final int mode, final int speed, final String gpioDevice, final int dcPin,
+            final int rstPin, final int blPin) {
+        this(device, mode, speed, gpioDevice, dcPin, rstPin, blPin, 65536);
+    }
+
+    /**
+     * Initializes hardware with SPI, DC pin, Reset pin, Backlight pin, and configurable buffer size.
+     *
+     * @param device SPI device path.
+     * @param mode SPI mode.
+     * @param speed SPI speed in Hz.
+     * @param gpioDevice GPIO chip path.
+     * @param dcPin Data/Command BCM pin number.
+     * @param rstPin Reset BCM pin number (or -1 if unused).
+     * @param blPin Backlight BCM pin number (or -1 if unused).
+     * @param bufferSize Transfer buffer chunk size in bytes.
+     */
+    public St7789(final String device, final int mode, final int speed, final String gpioDevice, final int dcPin,
+            final int rstPin, final int blPin, final int bufferSize) {
         super(240, 320, bufferSize);
+        this.hasReset = rstPin >= 0;
+        this.hasBacklight = blPin >= 0;
+        this.rstHandle = hasReset ? Periphery.gpio_new() : MemorySegment.NULL;
+        this.blHandle = hasBacklight ? Periphery.gpio_new() : MemorySegment.NULL;
+
         final var cDevice = getArena().allocateFrom(device);
         final var cGpioDev = getArena().allocateFrom(gpioDevice);
         if (Periphery.spi_open(getHandle(), cDevice, mode, speed) < 0) {
@@ -175,25 +218,32 @@ public class St7789 extends AbstractColorDisplay {
         if (Periphery.gpio_open(getDcHandle(), cGpioDev, dcPin, GPIO_DIR_OUT) < 0) {
             throw new RuntimeException("DC GPIO open failed");
         }
+        if (hasReset) {
+            if (Periphery.gpio_open(rstHandle, cGpioDev, rstPin, GPIO_DIR_OUT) < 0) {
+                throw new RuntimeException("RST GPIO open failed");
+            }
+        }
+        if (hasBacklight) {
+            if (Periphery.gpio_open(blHandle, cGpioDev, blPin, GPIO_DIR_OUT) < 0) {
+                throw new RuntimeException("BL GPIO open failed");
+            }
+        }
         setup();
     }
 
     /**
-     * Sends command bytes and optional parameters, correctly managing D/C line state transitions (D/C LOW for command, D/C HIGH for
-     * parameters).
+     * Sends command bytes and optional parameters, correctly managing D/C line state transitions.
      *
      * @param data Command array with optional parameter bytes.
      */
     @Override
     public final void writeCommand(final byte[] data) {
         if (getHandle().address() != 0 && getArena().scope().isAlive()) {
-            // Command byte with D/C LOW
             Periphery.gpio_write(getDcHandle(), false);
             getCommandSegment().set(ValueLayout.JAVA_BYTE, 0L, data[0]);
             if (Periphery.spi_transfer(getHandle(), getCommandSegment(), MemorySegment.NULL, 1) < 0) {
                 throw new RuntimeException("SPI Command failed");
             }
-            // Parameter bytes with D/C HIGH
             if (data.length > 1) {
                 Periphery.gpio_write(getDcHandle(), true);
                 MemorySegment.copy(data, 1, getCommandSegment(), ValueLayout.JAVA_BYTE, 0, data.length - 1);
@@ -205,8 +255,7 @@ public class St7789 extends AbstractColorDisplay {
     }
 
     /**
-     * Sends data bytes (pixels) directly from a {@link MemorySegment} in optimized chunks using write-only configuration
-     * (`MemorySegment.NULL`).
+     * Sends data bytes (pixels) directly from a {@link MemorySegment} in optimized chunks.
      *
      * @param segment Native segment containing pixel data.
      */
@@ -228,10 +277,19 @@ public class St7789 extends AbstractColorDisplay {
     }
 
     /**
-     * Performs software reset and complete initialization sequence for 2.0-inch ST7789 IPS panels.
+     * Performs optional hardware reset, backlight activation, and complete initialization sequence for ST7789 IPS panels.
      */
     public final void setup() {
         try {
+            if (hasReset) {
+                Periphery.gpio_write(rstHandle, false);
+                TimeUnit.MILLISECONDS.sleep(20);
+                Periphery.gpio_write(rstHandle, true);
+                TimeUnit.MILLISECONDS.sleep(150);
+            }
+            if (hasBacklight) {
+                Periphery.gpio_write(blHandle, true);
+            }
             Periphery.gpio_write(getDcHandle(), false);
             TimeUnit.MILLISECONDS.sleep(150);
             writeCommand(new byte[]{SWRESET});
@@ -239,8 +297,6 @@ public class St7789 extends AbstractColorDisplay {
             writeCommand(new byte[]{SLPOUT});
             TimeUnit.MILLISECONDS.sleep(500);
             writeCommand(new byte[]{COLMOD, (byte) 0x55}); // 16-bit RGB565
-            // MADCTL configuration: Column/Row Exchange (MV) and Refresh Directions 
-            // set to prevent off-screen shifting and quarter-screen clipping.
             writeCommand(new byte[]{MADCTL, (byte) 0x00});
             writeCommand(new byte[]{PORCTRL, (byte) 0x0c, (byte) 0x0c, (byte) 0x00, (byte) 0x33, (byte) 0x33});
             writeCommand(new byte[]{GCTRL, (byte) 0x35});
@@ -255,7 +311,7 @@ public class St7789 extends AbstractColorDisplay {
                 (byte) 0x3f, (byte) 0x54, (byte) 0x4c, (byte) 0x18, (byte) 0x0d, (byte) 0x0b, (byte) 0x1f, (byte) 0x23});
             writeCommand(new byte[]{NVGAMCTRL, (byte) 0xd0, (byte) 0x04, (byte) 0x0c, (byte) 0x11, (byte) 0x13, (byte) 0x2c,
                 (byte) 0x3f, (byte) 0x44, (byte) 0x51, (byte) 0x2f, (byte) 0x1f, (byte) 0x1f, (byte) 0x20, (byte) 0x23});
-            writeCommand(new byte[]{INVON}); // IPS panels usually require inversion ON
+            writeCommand(new byte[]{INVON});
             writeCommand(new byte[]{NORON});
             TimeUnit.MILLISECONDS.sleep(10);
             writeCommand(new byte[]{DISPON});
@@ -293,7 +349,6 @@ public class St7789 extends AbstractColorDisplay {
             final var offset = (long) (y * getWidth() + x) * 2L;
             getImageSegment().set(ValueLayout.JAVA_SHORT_UNALIGNED, offset, Short.reverseBytes(packed));
 
-            // Push individual pixel update to display frame memory
             setWindow(x, y, 1, 1);
             final var pixelSegment = getImageSegment().asSlice(offset, 2L);
             writeData(pixelSegment);
@@ -317,7 +372,7 @@ public class St7789 extends AbstractColorDisplay {
     }
 
     /**
-     * Maps a sub-region of a {@link BufferedImage} to RGB565 and renders it to a specific window on the display (dirty write).
+     * Maps a sub-region of a {@link BufferedImage} to RGB565 and renders it to a specific window.
      *
      * @param image Source BufferedImage.
      * @param x Destination window X start coordinate.
@@ -345,9 +400,6 @@ public class St7789 extends AbstractColorDisplay {
 
     /**
      * Sets the active drawing window on the ST7789 display controller.
-     * <p>
-     * Sends column address, row address, and RAM write commands to define the active rendering frame buffer region.
-     * </p>
      *
      * @param x X start coordinate.
      * @param y Y start coordinate.
@@ -383,6 +435,9 @@ public class St7789 extends AbstractColorDisplay {
             if (getHandle().address() != 0 && getArena().scope().isAlive()) {
                 writeCommand(new byte[]{DISPOFF});
                 writeCommand(new byte[]{SLPIN});
+                if (hasBacklight && blHandle.address() != 0) {
+                    Periphery.gpio_write(blHandle, false);
+                }
             }
         } catch (final Exception e) {
             System.err.printf("Error turning off display during emergency close: %s%n", e.getMessage());
@@ -392,6 +447,14 @@ public class St7789 extends AbstractColorDisplay {
             }
             if (getDcHandle().address() != 0) {
                 Periphery.gpio_close(getDcHandle());
+            }
+            if (hasReset && rstHandle.address() != 0) {
+                Periphery.gpio_close(rstHandle);
+                Periphery.gpio_free(rstHandle);
+            }
+            if (hasBacklight && blHandle.address() != 0) {
+                Periphery.gpio_close(blHandle);
+                Periphery.gpio_free(blHandle);
             }
         }
     }
