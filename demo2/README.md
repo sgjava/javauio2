@@ -30,6 +30,7 @@ code. Just pass in --help to get list of command line arguments. Make sure demo2
 * `java -cp "demo2-1.0.0-SNAPSHOT-jar-with-dependencies.jar" --enable-native-access=ALL-UNNAMED com.codeferm.periphery.display.demo.DefenderScroller --help`
 * `java -cp "demo2-1.0.0-SNAPSHOT-jar-with-dependencies.jar" --enable-native-access=ALL-UNNAMED com.codeferm.periphery.display.demo.Perf --display-type SSD1331 -d /dev/spidev1.0 -dc 199 -res 198`
 * `java -cp "demo2-1.0.0-SNAPSHOT-jar-with-dependencies.jar" --enable-native-access=ALL-UNNAMED com.codeferm.periphery.display.demo.CubeDemo --display-type ST7789 -l false`
+* `java -cp "demo2-1.0.0-SNAPSHOT-jar-with-dependencies.jar" --enable-native-access=ALL-UNNAMED com.codeferm.periphery.display.demo.TouchCalculator --display-type ILI9341 -dc 233 -res 76 -led 72 --touch-type XPT2046 --touch-device /dev/spidev1.0 --touch-irq-line 34`
 
 ## Run U8g2 demos
 To see a list of demos 
