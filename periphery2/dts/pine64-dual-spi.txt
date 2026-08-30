@@ -1,0 +1,21 @@
+sudo nano /boot/armbianEnv.txt
+
+Remove spi-spidev from overlays=
+Remove param_spidev_spi_bus=0
+
+Append your custom overlay:
+
+user_overlays=pine64-dual-spi
+
+Compile and apply the overlay:
+
+sudo dtc -I dts -O dtb -o /boot/overlay-user/pine64-dual-spi.dtbo pine64-dual-spi.dts
+
+Reboot the board:
+
+sudo reboot
+
+Check for active SPI devices and kernel output after boot:
+
+ls -l /dev/spidev*
+dmesg | grep -i spi

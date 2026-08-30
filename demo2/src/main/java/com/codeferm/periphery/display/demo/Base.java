@@ -5,8 +5,11 @@ package com.codeferm.periphery.display.demo;
 
 import com.codeferm.periphery.NativeLoader;
 import com.codeferm.periphery.device.AbstractColorDisplay;
+import com.codeferm.periphery.device.AbstractTouch;
+import com.codeferm.periphery.device.Ili9341;
 import com.codeferm.periphery.device.Ssd1331;
 import com.codeferm.periphery.device.St7789;
+import com.codeferm.periphery.device.Xpt2046;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.File;
@@ -19,10 +22,10 @@ import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine.Option;
 
 /**
- * Unified base CLI provider for hardware display demonstrations (u8g2 style).
+ * Unified base CLI provider for hardware display and touch demonstrations (u8g2 style).
  * <p>
- * Handles FFM native library loading, SPI/GPIO initialization, and provides a unified Java2D {@link Graphics2D} drawing surface
- * across different display controllers.
+ * Handles FFM native library loading, SPI/GPIO initialization for both display and touch controllers, and provides a unified Java2D
+ * {@link Graphics2D} drawing surface.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -40,16 +43,16 @@ public abstract class Base implements Callable<Integer> {
         NativeLoader.load();
     }
 
-    @Option(names = {"--display-type"}, description = "Display type (ST7789, SSD1331), ${DEFAULT-VALUE} by default.")
+    @Option(names = {"--display-type"}, description = "Display type (ST7789, ILI9341, SSD1331), ${DEFAULT-VALUE} by default.")
     private String displayType = "ST7789";
 
-    @Option(names = {"-d", "--device"}, description = "SPI device, ${DEFAULT-VALUE} by default.")
+    @Option(names = {"-d", "--device"}, description = "SPI device for display, ${DEFAULT-VALUE} by default.")
     private String device = "/dev/spidev0.0";
 
     @Option(names = {"-m", "--mode"}, description = "SPI mode, ${DEFAULT-VALUE} by default.")
     private int mode = 0;
 
-    @Option(names = {"-s", "--speed"}, description = "Max speed in Hz, ${DEFAULT-VALUE} by default.")
+    @Option(names = {"-s", "--speed"}, description = "Display max speed in Hz, ${DEFAULT-VALUE} by default.")
     private int speed = 32000000;
 
     @Option(names = {"-g", "--gpio-device"}, description = "GPIO device, ${DEFAULT-VALUE} by default.")
@@ -58,11 +61,30 @@ public abstract class Base implements Callable<Integer> {
     @Option(names = {"-dc", "--dc-line"}, description = "DC line, ${DEFAULT-VALUE} by default.")
     private int dc = 71;
 
-    @Option(names = {"-res", "--res-line"}, description = "RES line (SSD1331 only), ${DEFAULT-VALUE} by default.")
+    @Option(names = {"-res", "--res-line"}, description = "RES line (SSD1331/ILI9341), ${DEFAULT-VALUE} by default.")
     private int res = 25;
+
+    @Option(names = {"-led", "--led-line"}, description = "LED backlight line (ILI9341), ${DEFAULT-VALUE} by default.")
+    private int led = 24;
 
     @Option(names = {"-b", "--buffer-size"}, description = "SPI transfer buffer chunk size in bytes, ${DEFAULT-VALUE} by default.")
     private int bufferSize = 65536;
+
+    // --- Touch Configuration Options ---
+    @Option(names = {"--touch-type"}, description = "Touch type (XPT2046, NONE), ${DEFAULT-VALUE} by default.")
+    private String touchType = "NONE";
+
+    @Option(names = {"--touch-device"}, description = "SPI device for touch, ${DEFAULT-VALUE} by default.")
+    private String touchDevice = "/dev/spidev1.0";
+
+    @Option(names = {"--touch-mode"}, description = "Touch SPI mode, ${DEFAULT-VALUE} by default.")
+    private int touchMode = 0;
+
+    @Option(names = {"--touch-speed"}, description = "Touch SPI max speed in Hz, ${DEFAULT-VALUE} by default.")
+    private int touchSpeed = 2000000;
+
+    @Option(names = {"--touch-irq-line"}, description = "Touch IRQ GPIO line offset, ${DEFAULT-VALUE} by default.")
+    private int touchIrqLine = 34;
 
     @Option(names = {"-f", "--fps"}, description = "Target frames per second, ${DEFAULT-VALUE} by default.")
     private int fps = 60;
@@ -80,6 +102,11 @@ public abstract class Base implements Callable<Integer> {
      * Unified abstract color display driver instance.
      */
     private AbstractColorDisplay display;
+
+    /**
+     * Unified abstract touch controller instance.
+     */
+    private AbstractTouch touch;
 
     /**
      * Off-screen image buffer for Java2D rendering.
@@ -107,7 +134,7 @@ public abstract class Base implements Callable<Integer> {
     private volatile boolean running = true;
 
     /**
-     * Bootstraps hardware and initializes the rendering context based on the selected display type.
+     * Bootstraps hardware and initializes the rendering context based on the selected display and touch types.
      * <p>
      * Registers a JVM shutdown hook to handle {@code SIGINT} (Ctrl+C) and schedules an automatic exit task based on
      * {@code runTime}.
@@ -119,17 +146,31 @@ public abstract class Base implements Callable<Integer> {
     @Override
     public Integer call() throws Exception {
         log.info("Initializing display type {} on {} (speed: {}Hz)", displayType, device, speed);
-
-        if ("ST7789".equalsIgnoreCase(displayType)) {
-            display = new St7789(device, mode, speed, gpioDevice, dc, bufferSize);
-        } else if ("SSD1331".equalsIgnoreCase(displayType)) {
-            display = new Ssd1331(device, mode, speed, gpioDevice, dc, res);
-        } else {
-            throw new IllegalArgumentException("Unknown display type: " + displayType);
-        }
-
+        display = switch (displayType != null ? displayType.toUpperCase() : "") {
+            case "ST7789" ->
+                new St7789(device, mode, speed, gpioDevice, dc, bufferSize);
+            case "ILI9341" ->
+                new Ili9341(device, mode, speed, gpioDevice, dc, res, led, bufferSize);
+            case "SSD1331" ->
+                new Ssd1331(device, mode, speed, gpioDevice, dc, res);
+            default ->
+                throw new IllegalArgumentException("Unknown display type: " + displayType);
+        };
         width = display.getWidth();
         height = display.getHeight();
+
+        // Initialize optional touch controller
+        if (touchType != null && !touchType.equalsIgnoreCase("NONE")) {
+            log.info("Initializing touch type {} on {} (speed: {}Hz, IRQ line: {})", touchType, touchDevice, touchSpeed,
+                    touchIrqLine);
+            touch = switch (touchType.toUpperCase()) {
+                case "XPT2046" ->
+                    new Xpt2046(touchDevice, touchMode, touchSpeed, gpioDevice, touchIrqLine);
+                default ->
+                    throw new IllegalArgumentException("Unknown touch type: " + touchType);
+            };
+            touch.open();
+        }
 
         // Initialize high-performance off-screen buffer
         final var bufferedImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
@@ -139,15 +180,15 @@ public abstract class Base implements Callable<Integer> {
         final var mainThread = Thread.currentThread();
         final var scheduler = Executors.newSingleThreadScheduledExecutor();
 
-        // Ensures display is turned off even if interrupted via Ctrl+C
+        // Ensures display and touch are shut down even if interrupted via Ctrl+C
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             if (running) {
-                log.info("Ctrl+C detected. Powering down display...");
+                log.info("Ctrl+C detected. Powering down hardware...");
                 running = false;
                 mainThread.interrupt();
                 done();
             }
-        }, "Display-Cleanup-Hook"));
+        }, "Hardware-Cleanup-Hook"));
 
         // Timer to prevent perpetual execution in headless or automated environments
         if (runTime > 0) {
@@ -168,7 +209,7 @@ public abstract class Base implements Callable<Integer> {
         }
 
         scheduler.shutdown();
-        log.info("Display initialized: {}x{}. Auto-exit: {}s, Snapshot: {}s.", width, height, runTime, snapshotTime);
+        log.info("Hardware initialized successfully. Auto-exit: {}s, Snapshot: {}s.", runTime, snapshotTime);
         return 0;
     }
 
@@ -199,17 +240,26 @@ public abstract class Base implements Callable<Integer> {
     }
 
     /**
-     * Executes hardware teardown and releases native resources cleanly across any display controller.
+     * Executes hardware teardown and releases native resources cleanly across display and touch controllers.
      */
     public void done() {
         synchronized (this) {
+            if (touch != null) {
+                try {
+                    touch.close();
+                    log.info("Touch hardware resources released.");
+                } catch (final Exception e) {
+                    log.error("Touch cleanup failed: {}", e.getMessage());
+                }
+                touch = null;
+            }
             if (display != null) {
                 try {
                     display.clear();
-                    display.close(); // Automatically triggers controller-specific closeNative()
-                    log.info("Hardware resources released.");
+                    display.close();
+                    log.info("Display hardware resources released.");
                 } catch (final Exception e) {
-                    log.error("Cleanup failed: {}", e.getMessage());
+                    log.error("Display cleanup failed: {}", e.getMessage());
                 }
                 display = null;
             }
