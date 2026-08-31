@@ -646,8 +646,14 @@ public class SpaceInvaders extends Base {
         g.clearRect(dirtyRect.x, dirtyRect.y, dirtyRect.width, dirtyRect.height);
 
         g.setFont(new Font("Monospaced", Font.PLAIN, Math.max(8, (int) (9 * spriteScale))));
+
+        // Use font metrics to safely position the score text baseline away from the top edge
+        final var fm = g.getFontMetrics();
+        final var scoreY = Math.max(fm.getAscent(), (int) (9 * spriteScale));
+
         g.setColor(Color.WHITE);
-        g.drawString(String.format("%04d", score), 2, 10);
+        g.drawString(String.format("%04d", score), 2, scoreY);
+
         g.setColor(Color.GREEN);
         for (var i = 0; i < lives; i++) {
             g.fillRect(w - (i * 6) - 7, h - 4, 4, 3);
