@@ -18,6 +18,7 @@ import org.periphery.Periphery;
  * This driver provides a high-performance interface to the ILI9341 controller, utilizing {@link MemorySegment} for zero-copy data
  * transfers. Optimized with a zero-allocation strategy to prevent memory thrashing and OutOfMemoryErrors in tight loops. It
  * inherits automated safe-teardown from {@link AbstractDevice} and implements pixel and shape drawing via software rasterization.
+ * Supports rotation orientations (0, 90, 180, 270 degrees).
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -146,6 +147,7 @@ public class Ili9341 extends AbstractColorDisplay {
      * Pump Ratio Control.
      */
     public static final byte PUMPRAT = (byte) 0xF7;
+
     /**
      * Sleep In command.
      */
@@ -221,6 +223,37 @@ public class Ili9341 extends AbstractColorDisplay {
     }
 
     /**
+     * Sets the display rotation orientation (0, 90, 180, 270 degrees) and updates the hardware memory access control (MADCTL)
+     * register.
+     *
+     * @param rotation Rotation angle in degrees.
+     */
+    @Override
+    public final void setRotation(final int rotation) {
+        super.setRotation(rotation);
+        final var mode = (this.rotation / 90) % 4;
+        byte madctlValue;
+        switch (mode) {
+            case 1:
+                madctlValue = (byte) 0x28; // 90 degrees
+                break;
+            case 2:
+                madctlValue = (byte) 0xC8; // 180 degrees
+                break;
+            case 3:
+                madctlValue = (byte) 0xE8; // 270 degrees
+                break;
+            case 0:
+            default:
+                madctlValue = (byte) 0x48; // 0 degrees
+                break;
+        }
+        if (getHandle().address() != 0 && getArena().scope().isAlive()) {
+            writeCommand(new byte[]{MADCTL, madctlValue});
+        }
+    }
+
+    /**
      * Sends command bytes and optional parameters, correctly managing D/C line state transitions (D/C LOW for command, D/C HIGH for
      * parameters).
      *
@@ -229,13 +262,11 @@ public class Ili9341 extends AbstractColorDisplay {
     @Override
     public final void writeCommand(final byte[] data) {
         if (getHandle().address() != 0 && getArena().scope().isAlive()) {
-            // Command byte with D/C LOW
             Periphery.gpio_write(getDcHandle(), false);
             getCommandSegment().set(ValueLayout.JAVA_BYTE, 0L, data[0]);
             if (Periphery.spi_transfer(getHandle(), getCommandSegment(), MemorySegment.NULL, 1) < 0) {
                 throw new RuntimeException("SPI Command failed");
             }
-            // Parameter bytes with D/C HIGH
             if (data.length > 1) {
                 Periphery.gpio_write(getDcHandle(), true);
                 MemorySegment.copy(data, 1, getCommandSegment(), ValueLayout.JAVA_BYTE, 0, data.length - 1);
@@ -274,10 +305,8 @@ public class Ili9341 extends AbstractColorDisplay {
      */
     public final void setup() {
         try {
-            // Turn Backlight ON
             Periphery.gpio_write(ledHandle, true);
 
-            // Hardware Reset Sequence
             Periphery.gpio_write(rstHandle, true);
             TimeUnit.MILLISECONDS.sleep(50);
             Periphery.gpio_write(rstHandle, false);
@@ -296,21 +325,23 @@ public class Ili9341 extends AbstractColorDisplay {
             writeCommand(new byte[]{DTCTRLB, (byte) 0x00, (byte) 0x00});
             writeCommand(new byte[]{PWOFFS, (byte) 0x64, (byte) 0x03, (byte) 0x12, (byte) 0x81});
             writeCommand(new byte[]{PUMPRAT, (byte) 0x20});
-            writeCommand(new byte[]{PWCTRL1, (byte) 0x23}); // Power Control 1
-            writeCommand(new byte[]{PWCTRL2, (byte) 0x10}); // Power Control 2
-            writeCommand(new byte[]{VMCTR1, (byte) 0x3e, (byte) 0x28}); // VCOM Control 1
-            writeCommand(new byte[]{VMCTR2, (byte) 0x86}); // VCOM Control 2
-            writeCommand(new byte[]{MADCTL, (byte) 0x48}); // Memory Access Control
-            writeCommand(new byte[]{COLMOD, (byte) 0x55}); // Pixel Format 16-bit RGB565
-            writeCommand(new byte[]{FRMCTR1, (byte) 0x00, (byte) 0x18}); // Frame Rate
-            writeCommand(new byte[]{DFUNCTR, (byte) 0x08, (byte) 0x82, (byte) 0x27}); // Display Function Control
-            writeCommand(new byte[]{FUNCTR3G, (byte) 0x00}); // 3G Function Disable
-            writeCommand(new byte[]{GAMSET, (byte) 0x01}); // Gamma Curve Selected
+            writeCommand(new byte[]{PWCTRL1, (byte) 0x23});
+            writeCommand(new byte[]{PWCTRL2, (byte) 0x10});
+            writeCommand(new byte[]{VMCTR1, (byte) 0x3e, (byte) 0x28});
+            writeCommand(new byte[]{VMCTR2, (byte) 0x86});
 
-            writeCommand(new byte[]{SLPOUT}); // Sleep Out
+            setRotation(rotation);
+
+            writeCommand(new byte[]{COLMOD, (byte) 0x55});
+            writeCommand(new byte[]{FRMCTR1, (byte) 0x00, (byte) 0x18});
+            writeCommand(new byte[]{DFUNCTR, (byte) 0x08, (byte) 0x82, (byte) 0x27});
+            writeCommand(new byte[]{FUNCTR3G, (byte) 0x00});
+            writeCommand(new byte[]{GAMSET, (byte) 0x01});
+
+            writeCommand(new byte[]{SLPOUT});
             TimeUnit.MILLISECONDS.sleep(120);
 
-            writeCommand(new byte[]{DISPON}); // Display On
+            writeCommand(new byte[]{DISPON});
             TimeUnit.MILLISECONDS.sleep(50);
 
             clear();
@@ -346,7 +377,6 @@ public class Ili9341 extends AbstractColorDisplay {
             final var offset = (long) (y * getWidth() + x) * 2L;
             getImageSegment().set(ValueLayout.JAVA_SHORT_UNALIGNED, offset, Short.reverseBytes(packed));
 
-            // Push individual pixel update to display frame memory
             setWindow(x, y, 1, 1);
             final var pixelSegment = getImageSegment().asSlice(offset, 2L);
             writeData(pixelSegment);
@@ -370,7 +400,7 @@ public class Ili9341 extends AbstractColorDisplay {
     }
 
     /**
-     * Maps a sub-region of a {@link BufferedImage} to RGB565 and renders it to a specific window on the display (dirty write).
+     * Maps a sub-region of a {@link BufferedImage} to RGB565 and renders it to a specific window on the display.
      *
      * @param image Source BufferedImage.
      * @param x Destination window X start coordinate.
@@ -398,9 +428,6 @@ public class Ili9341 extends AbstractColorDisplay {
 
     /**
      * Sets the active drawing window on the ILI9341 display controller.
-     * <p>
-     * Sends column address, row address, and RAM write commands to define the active rendering frame buffer region.
-     * </p>
      *
      * @param x X start coordinate.
      * @param y Y start coordinate.
@@ -434,7 +461,7 @@ public class Ili9341 extends AbstractColorDisplay {
         log.debug("Closing ILI9341 LCD Display");
         try {
             if (getHandle().address() != 0 && getArena().scope().isAlive()) {
-                Periphery.gpio_write(ledHandle, false); // Turn backlight off
+                Periphery.gpio_write(ledHandle, false);
                 writeCommand(new byte[]{DISPOFF});
                 writeCommand(new byte[]{SLPIN});
             }

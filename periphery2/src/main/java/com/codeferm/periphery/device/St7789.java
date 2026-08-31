@@ -16,7 +16,7 @@ import org.periphery.Periphery;
  * <p>
  * This driver provides a high-performance interface to the ST7789 controller, utilizing {@link MemorySegment} for zero-copy data
  * transfers. Optimized with a zero-allocation strategy to prevent memory thrashing and OutOfMemoryErrors in tight loops. Supports
- * optional hardware Reset (RST) and Backlight (BL) pins.
+ * optional hardware Reset (RST), Backlight (BL) pins, and display rotation.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -232,6 +232,31 @@ public class St7789 extends AbstractColorDisplay {
     }
 
     /**
+     * Sets the display rotation and configures memory access control and dimensions accordingly.
+     *
+     * @param rotation Rotation angle in degrees (0, 90, 180, 270).
+     */
+    @Override
+    public final void setRotation(final int rotation) {
+        super.setRotation(rotation);
+        if (getHandle().address() != 0 && getArena().scope().isAlive()) {
+            final int madctlVal = switch (rotation) {
+                case 0 ->
+                    0x00;   // Portrait
+                case 90 ->
+                    0x60;  // Landscape
+                case 180 ->
+                    0xC0; // Inverted Portrait
+                case 270 ->
+                    0xA0; // Inverted Landscape
+                default ->
+                    0x00;
+            };
+            writeCommand(new byte[]{MADCTL, (byte) madctlVal});
+        }
+    }
+
+    /**
      * Sends command bytes and optional parameters, correctly managing D/C line state transitions.
      *
      * @param data Command array with optional parameter bytes.
@@ -297,7 +322,10 @@ public class St7789 extends AbstractColorDisplay {
             writeCommand(new byte[]{SLPOUT});
             TimeUnit.MILLISECONDS.sleep(500);
             writeCommand(new byte[]{COLMOD, (byte) 0x55}); // 16-bit RGB565
-            writeCommand(new byte[]{MADCTL, (byte) 0x00});
+
+            // Apply current rotation configuration during setup
+            setRotation(getRotation());
+
             writeCommand(new byte[]{PORCTRL, (byte) 0x0c, (byte) 0x0c, (byte) 0x00, (byte) 0x33, (byte) 0x33});
             writeCommand(new byte[]{GCTRL, (byte) 0x35});
             writeCommand(new byte[]{VCOMS, (byte) 0x35});

@@ -16,8 +16,8 @@ import org.periphery.gpio_handle;
  * SSD1331 96x64 RGB OLED driver using Java Foreign Function & Memory (FFM) API, extending {@link AbstractColorDisplay}.
  * <p>
  * This driver provides a high-performance interface to the SSD1331 controller, utilizing {@link MemorySegment} for zero-copy data
- * transfers and supporting all Hardware Graphic Acceleration Commands (GAC) overrides. Optimized with a zero-allocation strategy to
- * prevent memory thrashing.
+ * transfers and supporting all Hardware Graphic Acceleration Commands (GAC) overrides, along with display rotation. Optimized with
+ * a zero-allocation strategy to prevent memory thrashing.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -220,6 +220,31 @@ public class Ssd1331 extends AbstractColorDisplay {
     }
 
     /**
+     * Sets the display rotation and configures re-map settings and dimensions accordingly.
+     *
+     * @param rotation Rotation angle in degrees (0, 90, 180, 270).
+     */
+    @Override
+    public final void setRotation(final int rotation) {
+        super.setRotation(rotation);
+        if (getHandle().address() != 0 && getArena().scope().isAlive()) {
+            final int remapVal = switch (rotation) {
+                case 0 ->
+                    0x72;   // Normal 
+                case 90 ->
+                    0x71;  // Rotated 90
+                case 180 ->
+                    0x70; // Rotated 180
+                case 270 ->
+                    0x73; // Rotated 270
+                default ->
+                    0x72;
+            };
+            writeCommand(new byte[]{SET_REMAP, (byte) remapVal});
+        }
+    }
+
+    /**
      * Sends command bytes using the pre-allocated commandSegment.
      *
      * @param data Command array.
@@ -270,7 +295,10 @@ public class Ssd1331 extends AbstractColorDisplay {
             Periphery.gpio_write(resHandle, true);
             TimeUnit.MILLISECONDS.sleep(500);
             writeCommand(new byte[]{DISPLAY_OFF});
-            writeCommand(new byte[]{SET_REMAP, (byte) 0x72});
+
+            // Apply rotation configuration during setup
+            setRotation(getRotation());
+
             writeCommand(new byte[]{SET_DISPLAY_START_LINE, (byte) 0x00});
             writeCommand(new byte[]{SET_DISPLAY_OFFSET, (byte) 0x00});
             writeCommand(new byte[]{NORMAL_DISPLAY});

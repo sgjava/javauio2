@@ -70,6 +70,9 @@ public abstract class Base implements Callable<Integer> {
     @Option(names = {"-b", "--buffer-size"}, description = "SPI transfer buffer chunk size in bytes, ${DEFAULT-VALUE} by default.")
     private int bufferSize = 65536;
 
+    @Option(names = {"-r", "--rotation"}, description = "Display rotation (0, 90, 180, 270), ${DEFAULT-VALUE} by default.")
+    private int rotation = 0;
+
     // --- Touch Configuration Options ---
     @Option(names = {"--touch-type"}, description = "Touch type (XPT2046, NONE), ${DEFAULT-VALUE} by default.")
     private String touchType = "NONE";
@@ -145,8 +148,8 @@ public abstract class Base implements Callable<Integer> {
      */
     @Override
     public Integer call() throws Exception {
-        log.info("Initializing display type {} on {} (speed: {}Hz)", displayType, device, speed);
-        display = switch (displayType != null ? displayType.toUpperCase() : "") {
+        log.info("Initializing display type {} on {} (speed: {}Hz, rotation: {}°)", displayType, device, speed, rotation);
+        final var targetDisplay = switch (displayType != null ? displayType.toUpperCase() : "") {
             case "ST7789" ->
                 new St7789(device, mode, speed, gpioDevice, dc, bufferSize);
             case "ILI9341" ->
@@ -156,6 +159,9 @@ public abstract class Base implements Callable<Integer> {
             default ->
                 throw new IllegalArgumentException("Unknown display type: " + displayType);
         };
+        targetDisplay.setRotation(rotation);
+        display = targetDisplay;
+
         width = display.getWidth();
         height = display.getHeight();
 
@@ -163,13 +169,14 @@ public abstract class Base implements Callable<Integer> {
         if (touchType != null && !touchType.equalsIgnoreCase("NONE")) {
             log.info("Initializing touch type {} on {} (speed: {}Hz, IRQ line: {})", touchType, touchDevice, touchSpeed,
                     touchIrqLine);
-            touch = switch (touchType.toUpperCase()) {
+            final var targetTouch = switch (touchType.toUpperCase()) {
                 case "XPT2046" ->
                     new Xpt2046(touchDevice, touchMode, touchSpeed, gpioDevice, touchIrqLine);
                 default ->
                     throw new IllegalArgumentException("Unknown touch type: " + touchType);
             };
-            touch.open();
+            targetTouch.open();
+            touch = targetTouch;
         }
 
         // Initialize high-performance off-screen buffer
@@ -218,7 +225,7 @@ public abstract class Base implements Callable<Integer> {
      *
      * @param fileName The name of the file to save.
      */
-    public void saveSnapshot(final String fileName) {
+    public final void saveSnapshot(final String fileName) {
         synchronized (this) {
             try {
                 if (image != null) {
@@ -242,7 +249,7 @@ public abstract class Base implements Callable<Integer> {
     /**
      * Executes hardware teardown and releases native resources cleanly across display and touch controllers.
      */
-    public void done() {
+    public final void done() {
         synchronized (this) {
             if (touch != null) {
                 try {

@@ -16,7 +16,7 @@ import org.periphery.spi_handle;
  * Abstract base class for color display modules using Java Foreign Function & Memory (FFM) API.
  * <p>
  * Provides shared capabilities for color displays, including dimensions, buffer chunking strategies, high-performance RGB888 to
- * RGB565 zero-allocation conversion logic, and hardware-agnostic graphics primitives with optional hardware acceleration overrides.
+ * RGB565 zero-allocation conversion logic, hardware-agnostic graphics primitives, and display rotation management.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -32,16 +32,32 @@ public abstract class AbstractColorDisplay extends AbstractDevice {
     protected static final int GPIO_DIR_OUT = 1;
 
     /**
-     * Display width in pixels.
+     * Physical base display width in pixels (portrait mode).
      */
-    @Getter
-    private final int width;
+    protected final int baseWidth;
 
     /**
-     * Display height in pixels.
+     * Physical base display height in pixels (portrait mode).
+     */
+    protected final int baseHeight;
+
+    /**
+     * Current effective display width in pixels (accounts for rotation).
      */
     @Getter
-    private final int height;
+    private int width;
+
+    /**
+     * Current effective display height in pixels (accounts for rotation).
+     */
+    @Getter
+    private int height;
+
+    /**
+     * Current display rotation angle (0, 90, 180, 270).
+     */
+    @Getter
+    protected int rotation = 0;
 
     /**
      * Transfer chunk buffer size in bytes.
@@ -85,12 +101,30 @@ public abstract class AbstractColorDisplay extends AbstractDevice {
      */
     protected AbstractColorDisplay(final int width, final int height, final int bufferSize) {
         super(spi_handle.layout());
+        this.baseWidth = width;
+        this.baseHeight = height;
         this.width = width;
         this.height = height;
         this.bufferSize = bufferSize;
         this.dcHandle = getArena().allocate(gpio_handle.layout());
         this.commandSegment = getArena().allocate(64);
         this.imageSegment = getArena().allocate((long) width * height * 2);
+    }
+
+    /**
+     * Sets the display rotation orientation.
+     *
+     * @param rotation Rotation angle (0, 90, 180, 270).
+     */
+    public void setRotation(final int rotation) {
+        this.rotation = rotation % 360;
+        if (this.rotation == 90 || this.rotation == 270) {
+            this.width = baseHeight;
+            this.height = baseWidth;
+        } else {
+            this.width = baseWidth;
+            this.height = baseHeight;
+        }
     }
 
     /**
@@ -119,7 +153,7 @@ public abstract class AbstractColorDisplay extends AbstractDevice {
      */
     public abstract void drawImage(final BufferedImage image);
 
-/**
+    /**
      * Maps a sub-region of a {@link BufferedImage} to RGB565 and renders it to a specific window on the display.
      *
      * @param image Source BufferedImage.
@@ -132,7 +166,7 @@ public abstract class AbstractColorDisplay extends AbstractDevice {
         setWindow(x, y, width, height);
         final var pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
         final var imgWidth = image.getWidth();
-        
+
         var destOffset = 0L;
         for (var sy = 0; sy < height; sy++) {
             for (var sx = 0; sx < width; sx++) {
@@ -165,8 +199,7 @@ public abstract class AbstractColorDisplay extends AbstractDevice {
     public abstract void drawPixel(final int x, final int y, final int color);
 
     /**
-     * Draws a line from (x0, y0) to (x1, y1) using Bresenham's algorithm. Can be overridden by concrete drivers supporting hardware
-     * line acceleration (e.g., GAC).
+     * Draws a line from (x0, y0) to (x1, y1) using Bresenham's algorithm.
      *
      * @param x0 Start X coordinate.
      * @param y0 Start Y coordinate.
@@ -202,7 +235,7 @@ public abstract class AbstractColorDisplay extends AbstractDevice {
     }
 
     /**
-     * Draws an unfilled rectangle. Can be overridden by concrete drivers supporting hardware rectangle acceleration.
+     * Draws an unfilled rectangle.
      *
      * @param x Top-left X coordinate.
      * @param y Top-left Y coordinate.
@@ -220,8 +253,7 @@ public abstract class AbstractColorDisplay extends AbstractDevice {
     }
 
     /**
-     * Draws a filled rectangle. Can be overridden by concrete drivers supporting hardware fill acceleration (e.g., SSD1331 GAC
-     * fill).
+     * Draws a filled rectangle.
      *
      * @param x Top-left X coordinate.
      * @param y Top-left Y coordinate.
