@@ -11,6 +11,7 @@ import com.codeferm.periphery.device.Ssd1331;
 import com.codeferm.periphery.device.St7789;
 import com.codeferm.periphery.device.Xpt2046;
 import java.awt.Graphics2D;
+import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.util.concurrent.Callable;
@@ -25,7 +26,7 @@ import picocli.CommandLine.Option;
  * Unified base CLI provider for hardware display and touch demonstrations (u8g2 style).
  * <p>
  * Handles FFM native library loading, SPI/GPIO initialization for both display and touch controllers, and provides a unified Java2D
- * {@link Graphics2D} drawing surface.
+ * {@link Graphics2D} drawing surface, along with generic touch rotation mapping and hit-testing abstractions.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -41,6 +42,19 @@ public abstract class Base implements Callable<Integer> {
      */
     static {
         NativeLoader.load();
+    }
+
+    /**
+     * Touchable element interface for generic layout hit testing.
+     */
+    public interface TouchableElement {
+
+        /**
+         * Gets the bounding rectangle of the touchable element.
+         *
+         * @return Rectangle bounds.
+         */
+        Rectangle getBounds();
     }
 
     @Option(names = {"--display-type"}, description = "Display type (ST7789, ILI9341, SSD1331), ${DEFAULT-VALUE} by default.")
@@ -135,6 +149,79 @@ public abstract class Base implements Callable<Integer> {
      * Flag to signal rendering loops to terminate. Volatile ensures visibility across timer and shutdown hook threads.
      */
     private volatile boolean running = true;
+
+    /**
+     * Maps raw touch coordinates to screen coordinates, automatically handling rotation and calibration bounds.
+     *
+     * @param rawX Raw X coordinate from sensor.
+     * @param rawY Raw Y coordinate from sensor.
+     * @param minRawX Minimum raw X calibration bound.
+     * @param maxRawX Maximum raw X calibration bound.
+     * @param minRawY Minimum raw Y calibration bound.
+     * @param maxRawY Maximum raw Y calibration bound.
+     * @return Mapped screen point.
+     */
+    public final java.awt.Point mapTouchToScreen(final int rawX, final int rawY, final double minRawX,
+            final double maxRawX, final double minRawY, final double maxRawY) {
+        final var displayWidth = display.getWidth();
+        final var displayHeight = display.getHeight();
+
+        final double normX = Math.clamp((rawX - minRawX) / (maxRawX - minRawX), 0.0, 1.0);
+        final double normY = Math.clamp((rawY - minRawY) / (maxRawY - minRawY), 0.0, 1.0);
+
+        double screenNormX;
+        double screenNormY;
+
+        switch (rotation) {
+            case 90 -> {
+                screenNormX = normY;
+                screenNormY = 1.0 - normX;
+            }
+            case 180 -> {
+                screenNormX = 1.0 - normX;
+                screenNormY = 1.0 - normY;
+            }
+            case 270 -> {
+                screenNormX = 1.0 - normY;
+                screenNormY = normX;
+            }
+            default -> {
+                screenNormX = normX;
+                screenNormY = normY;
+            }
+        }
+
+        final var screenX = (int) (screenNormX * displayWidth);
+        final var screenY = (int) (screenNormY * displayHeight);
+        return new java.awt.Point(Math.clamp(screenX, 0, displayWidth - 1), Math.clamp(screenY, 0, displayHeight - 1));
+    }
+
+    /**
+     * Automatically maps raw touch coordinates (handling calibration and rotation) and performs hit-testing against a collection of
+     * touchable elements.
+     *
+     * @param rawX Raw X coordinate from sensor.
+     * @param rawY Raw Y coordinate from sensor.
+     * @param minRawX Minimum raw X calibration bound.
+     * @param maxRawX Maximum raw X calibration bound.
+     * @param minRawY Minimum raw Y calibration bound.
+     * @param maxRawY Maximum raw Y calibration bound.
+     * @param elements Array of touchable elements.
+     * @return The matched TouchableElement, or null if nothing was hit.
+     */
+    public final TouchableElement findTouchedElement(final int rawX, final int rawY, final double minRawX,
+            final double maxRawX, final double minRawY, final double maxRawY, final TouchableElement[] elements) {
+        final var screenPoint = mapTouchToScreen(rawX, rawY, minRawX, maxRawX, minRawY, maxRawY);
+
+        if (elements != null) {
+            for (final var element : elements) {
+                if (element.getBounds().contains(screenPoint)) {
+                    return element;
+                }
+            }
+        }
+        return null;
+    }
 
     /**
      * Bootstraps hardware and initializes the rendering context based on the selected display and touch types.

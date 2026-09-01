@@ -7,7 +7,6 @@ import com.codeferm.periphery.device.AbstractColorDisplay;
 import com.codeferm.periphery.device.AbstractTouch;
 import java.awt.Color;
 import java.awt.Font;
-import java.awt.image.BufferedImage;
 import java.io.FileOutputStream;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -73,7 +72,7 @@ public class TouchCalibration extends Base {
      * @param width Display width.
      * @param height Display height.
      */
-    private void convertArgbToRgb565(final BufferedImage bi, final byte[] dest, final int width, final int height) {
+    private void convertArgbToRgb565(final java.awt.image.BufferedImage bi, final byte[] dest, final int width, final int height) {
         var index = 0;
         for (var y = 0; y < height; y++) {
             for (var x = 0; x < width; x++) {

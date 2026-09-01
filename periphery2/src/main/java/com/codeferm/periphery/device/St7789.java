@@ -20,7 +20,7 @@ import org.periphery.Periphery;
  * </p>
  *
  * @author Steven P. Goldsmith
- * @version 1.0.0
+ * @version 1.1.0
  * @since 1.0.0
  */
 @Slf4j
@@ -232,27 +232,33 @@ public class St7789 extends AbstractColorDisplay {
     }
 
     /**
-     * Sets the display rotation and configures memory access control and dimensions accordingly.
+     * Sets the display rotation orientation (0, 90, 180, 270 degrees) and updates the hardware memory access control (MADCTL)
+     * register.
      *
-     * @param rotation Rotation angle in degrees (0, 90, 180, 270).
+     * @param rotation Rotation angle in degrees.
      */
     @Override
     public final void setRotation(final int rotation) {
         super.setRotation(rotation);
+        final var mode = (this.rotation / 90) % 4;
+        byte madctlValue;
+        switch (mode) {
+            case 1:
+                madctlValue = (byte) 0x60; // 90 degrees
+                break;
+            case 2:
+                madctlValue = (byte) 0xC0; // 180 degrees
+                break;
+            case 3:
+                madctlValue = (byte) 0xA0; // 270 degrees
+                break;
+            case 0:
+            default:
+                madctlValue = (byte) 0x00; // 0 degrees
+                break;
+        }
         if (getHandle().address() != 0 && getArena().scope().isAlive()) {
-            final int madctlVal = switch (rotation) {
-                case 0 ->
-                    0x00;   // Portrait
-                case 90 ->
-                    0x60;  // Landscape
-                case 180 ->
-                    0xC0; // Inverted Portrait
-                case 270 ->
-                    0xA0; // Inverted Landscape
-                default ->
-                    0x00;
-            };
-            writeCommand(new byte[]{MADCTL, (byte) madctlVal});
+            writeCommand(new byte[]{MADCTL, madctlValue});
         }
     }
 
@@ -323,8 +329,7 @@ public class St7789 extends AbstractColorDisplay {
             TimeUnit.MILLISECONDS.sleep(500);
             writeCommand(new byte[]{COLMOD, (byte) 0x55}); // 16-bit RGB565
 
-            // Apply current rotation configuration during setup
-            setRotation(getRotation());
+            setRotation(rotation);
 
             writeCommand(new byte[]{PORCTRL, (byte) 0x0c, (byte) 0x0c, (byte) 0x00, (byte) 0x33, (byte) 0x33});
             writeCommand(new byte[]{GCTRL, (byte) 0x35});

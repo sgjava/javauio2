@@ -228,18 +228,23 @@ public class Ssd1331 extends AbstractColorDisplay {
     public final void setRotation(final int rotation) {
         super.setRotation(rotation);
         if (getHandle().address() != 0 && getArena().scope().isAlive()) {
-            final int remapVal = switch (rotation) {
-                case 0 ->
-                    0x72;   // Normal 
-                case 90 ->
-                    0x71;  // Rotated 90
-                case 180 ->
-                    0x70; // Rotated 180
-                case 270 ->
-                    0x73; // Rotated 270
-                default ->
-                    0x72;
-            };
+            final var mode = (this.rotation / 90) % 4;
+            final int remapVal;
+            switch (mode) {
+                case 1:
+                    remapVal = 0x71; // Rotated 90
+                    break;
+                case 2:
+                    remapVal = 0x70; // Rotated 180
+                    break;
+                case 3:
+                    remapVal = 0x73; // Rotated 270
+                    break;
+                case 0:
+                default:
+                    remapVal = 0x72; // Normal 0
+                    break;
+            }
             writeCommand(new byte[]{SET_REMAP, (byte) remapVal});
         }
     }
@@ -297,7 +302,7 @@ public class Ssd1331 extends AbstractColorDisplay {
             writeCommand(new byte[]{DISPLAY_OFF});
 
             // Apply rotation configuration during setup
-            setRotation(getRotation());
+            setRotation(rotation);
 
             writeCommand(new byte[]{SET_DISPLAY_START_LINE, (byte) 0x00});
             writeCommand(new byte[]{SET_DISPLAY_OFFSET, (byte) 0x00});

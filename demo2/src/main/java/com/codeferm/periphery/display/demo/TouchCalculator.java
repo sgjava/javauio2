@@ -19,7 +19,8 @@ import picocli.CommandLine;
 import picocli.CommandLine.Command;
 
 /**
- * Interactive touch calculator demo for display and touch controllers using properties calibration.
+ * Interactive touch calculator demo for display and touch controllers using properties calibration, leveraging base class touch and
+ * rotation abstractions.
  *
  * @author Steven P. Goldsmith
  * @version 1.0.0
@@ -56,10 +57,14 @@ public class TouchCalculator extends Base {
     private double maxRawY = 0;
 
     /**
-     * Define button layout representation.
+     * Define button layout representation implementing Base.TouchableElement.
      */
-    private record CalcButton(String label, Rectangle bounds, Color color) {
+    private record CalcButton(String label, Rectangle bounds, Color color) implements TouchableElement {
 
+        @Override
+        public Rectangle getBounds() {
+            return bounds;
+        }
     }
 
     private CalcButton[] buttons;
@@ -80,21 +85,21 @@ public class TouchCalculator extends Base {
             maxRawY = Double.parseDouble(props.getProperty("max.raw.y", "1000"));
             log.info("Loaded touch calibration from {}: minX={}, maxX={}, minY={}, maxY={}",
                     fileName, minRawX, maxRawX, minRawY, maxRawY);
-        } catch (Exception e) {
+        } catch (final Exception e) {
             log.error("Failed to load {}. Please run touch-calibrate first.", fileName);
             throw e;
         }
     }
 
     /**
-     * Initialize calculator button layout based on display dimensions.
+     * Initialize calculator button layout dynamically based on live display dimensions and orientation.
      */
     private void initButtons() {
-        final var startY = 100;
-        final var width = getWidth();
-        final var height = getHeight();
-        final var btnWidth = width / 4;
-        final var btnHeight = (height - startY) / 5;
+        final var displayWidth = getDisplay().getWidth();
+        final var displayHeight = getDisplay().getHeight();
+        final var startY = displayHeight > displayWidth ? 100 : 50;
+        final var btnWidth = displayWidth / 4;
+        final var btnHeight = (displayHeight - startY) / 5;
 
         final String[] labels = {
             "C", "±", "%", "÷",
@@ -152,37 +157,38 @@ public class TouchCalculator extends Base {
      * @param display The unified display driver instance.
      */
     private void drawUI(final AbstractColorDisplay display) {
-        final var width = display.getWidth();
-        final var height = display.getHeight();
+        final var displayWidth = display.getWidth();
+        final var displayHeight = display.getHeight();
+        final var startY = displayHeight > displayWidth ? 100 : 50;
 
-        if (frameBuffer == null) {
-            frameBuffer = new byte[width * height * BYTES_PER_PIXEL];
+        if (frameBuffer == null || frameBuffer.length != displayWidth * displayHeight * BYTES_PER_PIXEL) {
+            frameBuffer = new byte[displayWidth * displayHeight * BYTES_PER_PIXEL];
         }
 
         final var g = getG2d();
         synchronized (this) {
             // Background
             g.setColor(Color.BLACK);
-            g.fillRect(0, 0, width, height);
+            g.fillRect(0, 0, displayWidth, displayHeight);
 
             // Screen / Display readout area
             g.setColor(new Color(30, 30, 30));
-            g.fillRect(10, 20, width - 20, 70);
+            g.fillRect(10, 10, displayWidth - 20, startY - 20);
             g.setColor(Color.WHITE);
-            g.setFont(new Font("Monospaced", Font.BOLD, 28));
+            g.setFont(new Font("Monospaced", Font.BOLD, displayHeight > displayWidth ? 28 : 22));
 
             // Right align text in readout (shrink font if expression is too long)
             var metrics = g.getFontMetrics();
             var textWidth = metrics.stringWidth(displayExpression);
-            if (textWidth > width - 40) {
-                g.setFont(new Font("Monospaced", Font.BOLD, 20));
+            if (textWidth > displayWidth - 40) {
+                g.setFont(new Font("Monospaced", Font.BOLD, displayHeight > displayWidth ? 20 : 16));
                 metrics = g.getFontMetrics();
                 textWidth = metrics.stringWidth(displayExpression);
             }
-            g.drawString(displayExpression, width - textWidth - 20, 65);
+            g.drawString(displayExpression, displayWidth - textWidth - 20, startY - 25);
 
             // Buttons
-            g.setFont(new Font("SansSerif", Font.BOLD, 24));
+            g.setFont(new Font("SansSerif", Font.BOLD, displayHeight > displayWidth ? 24 : 18));
             for (final var btn : buttons) {
                 g.setColor(btn.color);
                 g.fillRect(btn.bounds.x + 2, btn.bounds.y + 2, btn.bounds.width - 4, btn.bounds.height - 4);
@@ -194,25 +200,12 @@ public class TouchCalculator extends Base {
                 g.drawString(btn.label, bx, by);
             }
 
-            convertArgbToRgb565(getImage(), frameBuffer, width, height);
+            convertArgbToRgb565(getImage(), frameBuffer, displayWidth, displayHeight);
         }
 
-        display.setWindow(0, 0, width, height);
+        display.setWindow(0, 0, displayWidth, displayHeight);
         MemorySegment.copy(frameBuffer, 0, display.getImageSegment(), ValueLayout.JAVA_BYTE, 0, frameBuffer.length);
         display.writeData(display.getImageSegment());
-    }
-
-    /**
-     * Dynamically map raw touch coordinates to screen pixel coordinates using calibration values.
-     *
-     * @param rawX Raw X coordinate.
-     * @param rawY Raw Y coordinate.
-     * @return Screen point.
-     */
-    private java.awt.Point mapTouchToScreen(final int rawX, final int rawY) {
-        final var screenX = (int) ((rawX - minRawX) / (maxRawX - minRawX) * getWidth());
-        final var screenY = (int) ((rawY - minRawY) / (maxRawY - minRawY) * getHeight());
-        return new java.awt.Point(Math.clamp(screenX, 0, getWidth() - 1), Math.clamp(screenY, 0, getHeight() - 1));
     }
 
     /**
@@ -303,7 +296,7 @@ public class TouchCalculator extends Base {
                     }
                     displayExpression = resStr;
                     evaluateNext = true;
-                } catch (Exception e) {
+                } catch (final Exception e) {
                     displayExpression = "Error";
                     evaluateNext = true;
                 }
@@ -331,21 +324,25 @@ public class TouchCalculator extends Base {
             while (!Thread.currentThread().isInterrupted() && isRunning()) {
                 if (touch != null && touch.isPressed()) {
                     final var rawPoint = touch.readCoordinates();
-                    final var screenPoint = mapTouchToScreen(rawPoint.x(), rawPoint.y());
 
-                    for (final var btn : buttons) {
-                        if (btn.bounds.contains(screenPoint)) {
-                            log.info("Button pressed: {}", btn.label);
-                            handleButtonPress(btn.label);
-                            drawUI(display);
-                            TimeUnit.MILLISECONDS.sleep(250); // Debounce delay
-                            break;
-                        }
+                    // Utilize base class abstractions for rotation mapping and hit-testing
+                    final var hitElement = findTouchedElement(
+                            rawPoint.x(), rawPoint.y(),
+                            minRawX, maxRawX, minRawY, maxRawY,
+                            buttons
+                    );
+
+                    if (hitElement != null) {
+                        final var btn = (CalcButton) hitElement;
+                        log.info("Button pressed: {}", btn.label);
+                        handleButtonPress(btn.label);
+                        drawUI(display);
+                        TimeUnit.MILLISECONDS.sleep(250); // Debounce delay
                     }
                 }
                 TimeUnit.MILLISECONDS.sleep(50);
             }
-        } catch (InterruptedException e) {
+        } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();
             log.info("Calculator demo interrupted.");
         }

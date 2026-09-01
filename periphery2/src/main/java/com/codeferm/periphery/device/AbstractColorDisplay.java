@@ -20,7 +20,7 @@ import org.periphery.spi_handle;
  * </p>
  *
  * @author Steven P. Goldsmith
- * @version 1.0.0
+ * @version 1.1.0
  * @since 1.0.0
  */
 @Slf4j
@@ -112,7 +112,7 @@ public abstract class AbstractColorDisplay extends AbstractDevice {
     }
 
     /**
-     * Sets the display rotation orientation.
+     * Sets the display rotation orientation, adjusting effective width and height accordingly.
      *
      * @param rotation Rotation angle (0, 90, 180, 270).
      */

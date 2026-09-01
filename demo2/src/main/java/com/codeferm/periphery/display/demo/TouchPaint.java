@@ -23,7 +23,8 @@ import picocli.CommandLine;
 import picocli.CommandLine.Command;
 
 /**
- * Interactive touch paint demo using hardware IRQ edge detection via encapsulated Xpt2046 polling.
+ * Interactive touch paint demo using hardware IRQ edge detection via encapsulated Xpt2046 polling, leveraging base class touch and
+ * rotation abstractions with calibrated span correction.
  *
  * @author Steven P. Goldsmith
  * @version 1.0.0
@@ -33,7 +34,7 @@ import picocli.CommandLine.Command;
         name = "TouchPaint",
         mixinStandardHelpOptions = true,
         version = "1.0.0-SNAPSHOT",
-        description = "Interactive touch paint demo with direct GPIO IRQ handling"
+        description = "Interactive touch paint demo with calibrated span correction"
 )
 @Slf4j
 public class TouchPaint extends Base {
@@ -83,10 +84,14 @@ public class TouchPaint extends Base {
     private double maxRawY = 0;
 
     /**
-     * Define toolbar button representation.
+     * Define toolbar button representation implementing Base.TouchableElement.
      */
-    private record ToolButton(String label, Rectangle bounds, Color color, String actionType) {
+    private record ToolButton(String label, Rectangle bounds, Color color, String actionType) implements TouchableElement {
 
+        @Override
+        public Rectangle getBounds() {
+            return bounds;
+        }
     }
 
     /**
@@ -95,7 +100,7 @@ public class TouchPaint extends Base {
     private ToolButton[] buttons;
 
     /**
-     * Load calibration properties from disk.
+     * Load calibration properties from disk and apply span padding to correct edge drift.
      *
      * @throws Exception If file reading fails or properties are missing.
      */
@@ -104,10 +109,21 @@ public class TouchPaint extends Base {
         final var fileName = "touch.properties";
         try (final var in = new FileInputStream(fileName)) {
             props.load(in);
-            minRawX = Double.parseDouble(props.getProperty("min.raw.x", "0"));
-            maxRawX = Double.parseDouble(props.getProperty("max.raw.x", "1000"));
-            minRawY = Double.parseDouble(props.getProperty("min.raw.y", "0"));
-            maxRawY = Double.parseDouble(props.getProperty("max.raw.y", "1000"));
+            final var rawMinX = Double.parseDouble(props.getProperty("min.raw.x", "0"));
+            final var rawMaxX = Double.parseDouble(props.getProperty("max.raw.x", "1000"));
+            final var rawMinY = Double.parseDouble(props.getProperty("min.raw.y", "0"));
+            final var rawMaxY = Double.parseDouble(props.getProperty("max.raw.y", "1000"));
+
+            // Apply a slight span adjustment if raw bounds compress the edges too much.
+            // Adjust these padding factors if touches still feel slightly off.
+            final var xSpan = rawMaxX - rawMinX;
+            final var ySpan = rawMaxY - rawMinY;
+
+            minRawX = rawMinX - (xSpan * 0.03);
+            maxRawX = rawMaxX + (xSpan * 0.03);
+            minRawY = rawMinY - (ySpan * 0.03);
+            maxRawY = rawMaxY + (ySpan * 0.03);
+
             log.info("Loaded touch calibration from {}: minX={}, maxX={}, minY={}, maxY={}",
                     fileName, minRawX, maxRawX, minRawY, maxRawY);
         } catch (final Exception e) {
@@ -117,12 +133,11 @@ public class TouchPaint extends Base {
     }
 
     /**
-     * Initialize toolbar buttons (colors, sizes, clear).
+     * Initialize toolbar buttons (colors, sizes, clear) with precise width distribution.
      */
     private void initToolbar() {
         final var width = getWidth();
         final var toolbarHeight = 50;
-        final var btnWidth = width / 9;
 
         final var labels = new String[]{"R", "G", "B", "W", "S1", "S2", "S3", "ER", "CLR"};
         final var colors = new Color[]{
@@ -134,7 +149,9 @@ public class TouchPaint extends Base {
 
         buttons = new ToolButton[labels.length];
         for (var i = 0; i < labels.length; i++) {
-            final var x = i * btnWidth;
+            final var x = (i * width) / labels.length;
+            final var nextX = ((i + 1) * width) / labels.length;
+            final var btnWidth = nextX - x;
             final var bounds = new Rectangle(x, 0, btnWidth, toolbarHeight);
             buttons[i] = new ToolButton(labels[i], bounds, colors[i], types[i]);
         }
@@ -221,19 +238,6 @@ public class TouchPaint extends Base {
     }
 
     /**
-     * Dynamically map raw touch coordinates to screen pixel coordinates using calibration values.
-     *
-     * @param rawX Raw X coordinate.
-     * @param rawY Raw Y coordinate.
-     * @return Screen point.
-     */
-    private java.awt.Point mapTouchToScreen(final int rawX, final int rawY) {
-        final var screenX = (int) ((rawX - minRawX) / (maxRawX - minRawX) * getWidth());
-        final var screenY = (int) ((rawY - minRawY) / (maxRawY - minRawY) * getHeight());
-        return new java.awt.Point(Math.clamp(screenX, 0, getWidth() - 1), Math.clamp(screenY, 0, getHeight() - 1));
-    }
-
-    /**
      * Handle toolbar button actions.
      *
      * @param btn ToolButton pressed.
@@ -294,20 +298,25 @@ public class TouchPaint extends Base {
                 if (edge == Periphery.GPIO_EDGE_FALLING()) {
                     while (xpt.isPressed()) {
                         final var rawPoint = xpt.readCoordinates();
-                        final var screenPoint = mapTouchToScreen(rawPoint.x(), rawPoint.y());
 
+                        // Map raw touch to screen coordinates
+                        final var screenPoint = mapTouchToScreen(
+                                rawPoint.x(), rawPoint.y(),
+                                minRawX, maxRawX, minRawY, maxRawY
+                        );
+
+                        // If touch is within toolbar area, compute button index directly
                         if (screenPoint.y < 50) {
                             lastX = -1;
                             lastY = -1;
-                            for (final var btn : buttons) {
-                                if (btn.bounds().contains(screenPoint)) {
-                                    handleToolbarAction(btn);
-                                    drawUI(display);
-                                    TimeUnit.MILLISECONDS.sleep(200);
-                                    break;
-                                }
+                            final var btnIndex = (screenPoint.x * buttons.length) / width;
+                            if (btnIndex >= 0 && btnIndex < buttons.length) {
+                                handleToolbarAction(buttons[btnIndex]);
+                                drawUI(display);
+                                TimeUnit.MILLISECONDS.sleep(150);
                             }
-                        } else {
+                        } else if (screenPoint.y >= 52) {
+                            // Drawing canvas action
                             canvasG2d.setColor(currentColor);
                             canvasG2d.setStroke(new BasicStroke(brushSize, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
 
