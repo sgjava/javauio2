@@ -28,14 +28,14 @@ This project adheres to rigorous development standards to ensure production-grad
 | **FFM Integration** | **Plugin Level.** FFM is an optional provider module. | **JNI Core.** Primarily utilizes JNI/JNA for native access. | **Native FFM.** Built specifically for Project Panama as the core engine. |
 | **32-Bit / Legacy ARM** | **Dropped.** No longer supports arm32 (Pi4J v3+ targets 64-bit architectures). | **Stagnant / Legacy.** Works on older 32-bit targets, but library development has slowed significantly. | **Universal 32/64-bit.** Runs natively across modern 64-bit and legacy 32-bit Linux kernels without distinction. |
 | **Board Support** | Board-specific definitions/configs often required. | Broad, but requires factory logic or native maps for each SoC. | **Universal.** If it runs a standard Linux kernel, it works instantly. |
-| **Graphics** | Community-ported Java drivers. | High-level/basic shape support. | **Abstracted Color Displays** for flexible hardware output. Full C-performance for color displays. |
+| **Graphics** | Community-ported Java drivers. | High-level/basic shape support. | **Abstracted Color Displays & Touch.** Dynamic display rotations, multi-sample touch calibration, and absolute edge extrapolation. |
 | **Portability** | Heavyweight (Core + Provider + Config). | Lightweight core, but SoC-specific factories. | **Ultra-Lightweight.** Zero-dependency bridge to Linux interfaces. |
 
 ### 1. Universal Kernel-Standardized I/O
 Most libraries require a "Provider" or specific plugin for every new board. **Java UIO 2** bypasses this middleman. By targeting the **Standard Linux Kernel ABI** (Character Devices and UIO), any board running a modern kernel is supported immediately. The Kernel is the only "Provider" you need.
 
 ### 2. Deep Graphics with Abstract Color Displays
-While other libraries stop at "Blinky," Java UIO 2 provides a professional-grade graphics stack. By abstracting display hardware and utilizing high-performance memory segments via FFM, you gain access to optimized drawing routines at near-native speeds.
+While other libraries stop at "Blinky," Java UIO 2 provides a professional-grade graphics stack. By abstracting display hardware and utilizing high-performance memory segments via FFM, you gain access to optimized drawing routines, dynamic rotations, and rotation-agnostic touch mapping at near-native speeds.
 
 ### 3. Hardware-Accurate Native Sizing
 A major weakness in traditional libraries is their reliance on manual JNI headers. Java UIO 2 uses a **Native Sizer** during the build process (via QEMU emulation). This guarantees that `MemoryLayout` offsets are byte-perfect for the target CPU architecture (ARM64, ARM32, or x86_64), preventing alignment traps and crashes.
@@ -66,8 +66,8 @@ In raw performance testing on the Pine A64 (Cortex-A53), the FFM implementation 
 
 ## 📦 Project Depth
 This repository contains more than just a library; it includes exhaustive demos demonstrating real-world complexity:
-* **Color Displays:** Full-color graphics, custom fonts, and buffer rotations using abstract display classes.
-* **Game Logic:** Arcade-style scrollers showcasing memory-efficient movement controllers and zero-allocation rendering loops.
+* **Color Displays & Touch:** Full-color graphics, dynamic rotations, multi-sample burst averaging, absolute edge extrapolation, and zero-allocation frame updates.
+* **Interactive Apps:** Touch calculators and paint utilities demonstrating rotation-agnostic coordinate mapping and clean component architecture.
 * **Native Demos:** Direct ports of JNI demos to the modern FFM era.
 
 ---
