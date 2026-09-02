@@ -14,6 +14,8 @@ import java.awt.Graphics2D;
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.io.File;
+import java.io.FileInputStream;
+import java.util.Properties;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -25,8 +27,9 @@ import picocli.CommandLine.Option;
 /**
  * Unified base CLI provider for hardware display and touch demonstrations (u8g2 style).
  * <p>
- * Handles FFM native library loading, SPI/GPIO initialization for both display and touch controllers, and provides a unified Java2D
- * {@link Graphics2D} drawing surface, along with generic touch rotation mapping and hit-testing abstractions.
+ * Handles FFM native library loading, SPI/GPIO initialization for both display and touch controllers, calibration properties
+ * management, and provides a unified Java2D {@link Graphics2D} drawing surface, along with generic touch rotation mapping and
+ * hit-testing abstractions.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -103,6 +106,9 @@ public abstract class Base implements Callable<Integer> {
     @Option(names = {"--touch-irq-line"}, description = "Touch IRQ GPIO line offset, ${DEFAULT-VALUE} by default.")
     private int touchIrqLine = 34;
 
+    @Option(names = {"-fp", "--touch-properties"}, description = "Touch properties configuration file, ${DEFAULT-VALUE} by default.")
+    private String touchPropertiesFile = "touch.properties";
+
     @Option(names = {"-f", "--fps"}, description = "Target frames per second, ${DEFAULT-VALUE} by default.")
     private int fps = 60;
 
@@ -114,6 +120,14 @@ public abstract class Base implements Callable<Integer> {
 
     @Option(names = {"--snapshot"}, description = "Seconds after start to capture screen, 0 to disable.")
     private int snapshotTime = 0;
+
+    /**
+     * Calibration bounds loaded from properties file.
+     */
+    protected double minRawX = 0;
+    protected double maxRawX = 4095;
+    protected double minRawY = 0;
+    protected double maxRawY = 4095;
 
     /**
      * Unified abstract color display driver instance.
@@ -151,18 +165,31 @@ public abstract class Base implements Callable<Integer> {
     private volatile boolean running = true;
 
     /**
+     * Load touch calibration properties from disk if available.
+     */
+    protected final void loadTouchProperties() {
+        final var props = new Properties();
+        try (final var in = new FileInputStream(touchPropertiesFile)) {
+            props.load(in);
+            minRawX = Double.parseDouble(props.getProperty("min.raw.x", String.valueOf(minRawX)));
+            maxRawX = Double.parseDouble(props.getProperty("max.raw.x", String.valueOf(maxRawX)));
+            minRawY = Double.parseDouble(props.getProperty("min.raw.y", String.valueOf(minRawY)));
+            maxRawY = Double.parseDouble(props.getProperty("max.raw.y", String.valueOf(maxRawY)));
+            log.info("Loaded touch calibration from {}: minX={}, maxX={}, minY={}, maxY={}",
+                    touchPropertiesFile, minRawX, maxRawX, minRawY, maxRawY);
+        } catch (final Exception e) {
+            log.warn("Failed to load {} (using defaults): {}", touchPropertiesFile, e.getMessage());
+        }
+    }
+
+    /**
      * Maps raw touch coordinates to screen coordinates, automatically handling rotation and calibration bounds.
      *
      * @param rawX Raw X coordinate from sensor.
      * @param rawY Raw Y coordinate from sensor.
-     * @param minRawX Minimum raw X calibration bound.
-     * @param maxRawX Maximum raw X calibration bound.
-     * @param minRawY Minimum raw Y calibration bound.
-     * @param maxRawY Maximum raw Y calibration bound.
      * @return Mapped screen point.
      */
-    public final java.awt.Point mapTouchToScreen(final int rawX, final int rawY, final double minRawX,
-            final double maxRawX, final double minRawY, final double maxRawY) {
+    public final java.awt.Point mapTouchToScreen(final int rawX, final int rawY) {
         final var displayWidth = display.getWidth();
         final var displayHeight = display.getHeight();
 
@@ -202,16 +229,11 @@ public abstract class Base implements Callable<Integer> {
      *
      * @param rawX Raw X coordinate from sensor.
      * @param rawY Raw Y coordinate from sensor.
-     * @param minRawX Minimum raw X calibration bound.
-     * @param maxRawX Maximum raw X calibration bound.
-     * @param minRawY Minimum raw Y calibration bound.
-     * @param maxRawY Maximum raw Y calibration bound.
      * @param elements Array of touchable elements.
      * @return The matched TouchableElement, or null if nothing was hit.
      */
-    public final TouchableElement findTouchedElement(final int rawX, final int rawY, final double minRawX,
-            final double maxRawX, final double minRawY, final double maxRawY, final TouchableElement[] elements) {
-        final var screenPoint = mapTouchToScreen(rawX, rawY, minRawX, maxRawX, minRawY, maxRawY);
+    public final TouchableElement findTouchedElement(final int rawX, final int rawY, final TouchableElement[] elements) {
+        final var screenPoint = mapTouchToScreen(rawX, rawY);
 
         if (elements != null) {
             for (final var element : elements) {
@@ -252,7 +274,7 @@ public abstract class Base implements Callable<Integer> {
         width = display.getWidth();
         height = display.getHeight();
 
-        // Initialize optional touch controller
+        // Initialize optional touch controller and load calibration properties
         if (touchType != null && !touchType.equalsIgnoreCase("NONE")) {
             log.info("Initializing touch type {} on {} (speed: {}Hz, IRQ line: {})", touchType, touchDevice, touchSpeed,
                     touchIrqLine);
@@ -264,6 +286,7 @@ public abstract class Base implements Callable<Integer> {
             };
             targetTouch.open();
             touch = targetTouch;
+            loadTouchProperties();
         }
 
         // Initialize high-performance off-screen buffer

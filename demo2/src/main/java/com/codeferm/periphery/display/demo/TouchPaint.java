@@ -12,10 +12,8 @@ import java.awt.Font;
 import java.awt.Graphics2D;
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
-import java.io.FileInputStream;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
-import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import org.periphery.Periphery;
@@ -24,7 +22,7 @@ import picocli.CommandLine.Command;
 
 /**
  * Interactive touch paint demo using hardware IRQ edge detection via encapsulated Xpt2046 polling, leveraging base class touch and
- * rotation abstractions with calibrated span correction.
+ * rotation abstractions with base-managed calibration properties.
  *
  * @author Steven P. Goldsmith
  * @version 1.0.0
@@ -34,7 +32,7 @@ import picocli.CommandLine.Command;
         name = "TouchPaint",
         mixinStandardHelpOptions = true,
         version = "1.0.0-SNAPSHOT",
-        description = "Interactive touch paint demo with calibrated span correction"
+        description = "Interactive touch paint demo with base-managed calibration"
 )
 @Slf4j
 public class TouchPaint extends Base {
@@ -76,14 +74,6 @@ public class TouchPaint extends Base {
     private int lastY = -1;
 
     /**
-     * Calibration raw bounds loaded from properties.
-     */
-    private double minRawX = 0;
-    private double maxRawX = 0;
-    private double minRawY = 0;
-    private double maxRawY = 0;
-
-    /**
      * Define toolbar button representation implementing Base.TouchableElement.
      */
     private record ToolButton(String label, Rectangle bounds, Color color, String actionType) implements TouchableElement {
@@ -98,39 +88,6 @@ public class TouchPaint extends Base {
      * Array of toolbar action buttons.
      */
     private ToolButton[] buttons;
-
-    /**
-     * Load calibration properties from disk and apply span padding to correct edge drift.
-     *
-     * @throws Exception If file reading fails or properties are missing.
-     */
-    private void loadProperties() throws Exception {
-        final var props = new Properties();
-        final var fileName = "touch.properties";
-        try (final var in = new FileInputStream(fileName)) {
-            props.load(in);
-            final var rawMinX = Double.parseDouble(props.getProperty("min.raw.x", "0"));
-            final var rawMaxX = Double.parseDouble(props.getProperty("max.raw.x", "1000"));
-            final var rawMinY = Double.parseDouble(props.getProperty("min.raw.y", "0"));
-            final var rawMaxY = Double.parseDouble(props.getProperty("max.raw.y", "1000"));
-
-            // Apply a slight span adjustment if raw bounds compress the edges too much.
-            // Adjust these padding factors if touches still feel slightly off.
-            final var xSpan = rawMaxX - rawMinX;
-            final var ySpan = rawMaxY - rawMinY;
-
-            minRawX = rawMinX - (xSpan * 0.03);
-            maxRawX = rawMaxX + (xSpan * 0.03);
-            minRawY = rawMinY - (ySpan * 0.03);
-            maxRawY = rawMaxY + (ySpan * 0.03);
-
-            log.info("Loaded touch calibration from {}: minX={}, maxX={}, minY={}, maxY={}",
-                    fileName, minRawX, maxRawX, minRawY, maxRawY);
-        } catch (final Exception e) {
-            log.error("Failed to load {}. Please run touch-calibrate first.", fileName);
-            throw e;
-        }
-    }
 
     /**
      * Initialize toolbar buttons (colors, sizes, clear) with precise width distribution.
@@ -201,8 +158,8 @@ public class TouchPaint extends Base {
      * @param display The unified display driver instance.
      */
     private void drawUI(final AbstractColorDisplay display) {
-        final var width = display.getWidth();
-        final var height = display.getHeight();
+        final var width = getWidth();
+        final var height = getHeight();
 
         if (frameBuffer == null) {
             frameBuffer = new byte[width * height * BYTES_PER_PIXEL];
@@ -210,7 +167,9 @@ public class TouchPaint extends Base {
 
         final var g = getG2d();
         synchronized (this) {
-            g.drawImage(canvasImage, 0, 0, null);
+            if (canvasImage != null) {
+                g.drawImage(canvasImage, 0, 0, null);
+            }
 
             g.setColor(new Color(40, 40, 40));
             g.fillRect(0, 0, width, 50);
@@ -261,8 +220,10 @@ public class TouchPaint extends Base {
             case "ER" ->
                 currentColor = Color.BLACK;
             case "CLR" -> {
-                canvasG2d.setColor(Color.BLACK);
-                canvasG2d.fillRect(0, 0, getWidth(), getHeight());
+                if (canvasG2d != null) {
+                    canvasG2d.setColor(Color.BLACK);
+                    canvasG2d.fillRect(0, 0, getWidth(), getHeight());
+                }
             }
             default -> {
             }
@@ -278,11 +239,10 @@ public class TouchPaint extends Base {
      * @throws Exception If hardware communication fails.
      */
     private void runDemo(final AbstractColorDisplay display, final AbstractTouch touch) throws Exception {
-        loadProperties();
         log.info("Paint demo with direct IRQ started on device {} line {}...", getGpioDevice(), getTouchIrqLine());
 
-        final var width = display.getWidth();
-        final var height = display.getHeight();
+        final var width = getWidth();
+        final var height = getHeight();
 
         initCanvas(width, height);
         initToolbar();
@@ -291,48 +251,68 @@ public class TouchPaint extends Base {
         final var xpt = (Xpt2046) touch;
 
         while (!Thread.currentThread().isInterrupted() && isRunning()) {
-            if (xpt != null && xpt.pollEvent(1000)) {
-                final var edge = xpt.getEdge();
+            try {
+                if (xpt != null && xpt.pollEvent(1000)) {
+                    final var edge = xpt.getEdge();
 
-                // Falling edge indicates touch down event
-                if (edge == Periphery.GPIO_EDGE_FALLING()) {
-                    while (xpt.isPressed()) {
-                        final var rawPoint = xpt.readCoordinates();
+                    // Falling edge indicates touch down event
+                    if (edge == Periphery.GPIO_EDGE_FALLING()) {
+                        while (xpt.isPressed() && !Thread.currentThread().isInterrupted() && isRunning()) {
+                            final var rawPoint = xpt.readCoordinates();
 
-                        // Map raw touch to screen coordinates
-                        final var screenPoint = mapTouchToScreen(
-                                rawPoint.x(), rawPoint.y(),
-                                minRawX, maxRawX, minRawY, maxRawY
-                        );
+                            // Map raw touch to screen coordinates using base class calibration
+                            final var screenPoint = mapTouchToScreen(rawPoint.x(), rawPoint.y());
 
-                        // If touch is within toolbar area, compute button index directly
-                        if (screenPoint.y < 50) {
-                            lastX = -1;
-                            lastY = -1;
-                            final var btnIndex = (screenPoint.x * buttons.length) / width;
-                            if (btnIndex >= 0 && btnIndex < buttons.length) {
-                                handleToolbarAction(buttons[btnIndex]);
-                                drawUI(display);
-                                TimeUnit.MILLISECONDS.sleep(150);
-                            }
-                        } else if (screenPoint.y >= 52) {
-                            // Drawing canvas action
-                            canvasG2d.setColor(currentColor);
-                            canvasG2d.setStroke(new BasicStroke(brushSize, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                            final var clampedX = Math.max(0, Math.min(screenPoint.x, width - 1));
+                            final var clampedY = Math.max(0, Math.min(screenPoint.y, height - 1));
 
-                            if (lastX == -1 || lastY == -1) {
-                                canvasG2d.drawLine(screenPoint.x, screenPoint.y, screenPoint.x, screenPoint.y);
+                            // If touch is within toolbar area, log raw and mapped coords to debug calibration
+                            if (clampedY < 50) {
+                                lastX = -1;
+                                lastY = -1;
+                                log.info("DEBUG TOUCH -> Raw: x={}, y={}, MappedScreen: x={}, y={}", rawPoint.x(), rawPoint.y(),
+                                        clampedX, clampedY);
+
+                                ToolButton clickedBtn = null;
+                                for (final var btn : buttons) {
+                                    if (btn.bounds().contains(clampedX, clampedY)) {
+                                        clickedBtn = btn;
+                                        break;
+                                    }
+                                }
+                                if (clickedBtn == null) {
+                                    final var btnIndex = (clampedX * buttons.length) / width;
+                                    if (btnIndex >= 0 && btnIndex < buttons.length) {
+                                        clickedBtn = buttons[btnIndex];
+                                    }
+                                }
+                                if (clickedBtn != null) {
+                                    handleToolbarAction(clickedBtn);
+                                    drawUI(display);
+                                    TimeUnit.MILLISECONDS.sleep(150);
+                                }
                             } else {
-                                canvasG2d.drawLine(lastX, lastY, screenPoint.x, screenPoint.y);
-                            }
-                            lastX = screenPoint.x;
-                            lastY = screenPoint.y;
+                                // Drawing canvas action
+                                canvasG2d.setColor(currentColor);
+                                canvasG2d.setStroke(new BasicStroke(brushSize, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
 
-                            drawUI(display);
+                                if (lastX == -1 || lastY == -1) {
+                                    canvasG2d.drawLine(clampedX, clampedY, clampedX, clampedY);
+                                } else {
+                                    canvasG2d.drawLine(lastX, lastY, clampedX, clampedY);
+                                }
+                                lastX = clampedX;
+                                lastY = clampedY;
+
+                                drawUI(display);
+                            }
+                            TimeUnit.MILLISECONDS.sleep(5);
                         }
-                        TimeUnit.MILLISECONDS.sleep(5);
                     }
                 }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
             }
             lastX = -1;
             lastY = -1;

@@ -9,10 +9,8 @@ import java.awt.Color;
 import java.awt.Font;
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
-import java.io.FileInputStream;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
-import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine;
@@ -49,14 +47,6 @@ public class TouchCalculator extends Base {
     private boolean evaluateNext = false;
 
     /**
-     * Calibration raw bounds loaded from properties.
-     */
-    private double minRawX = 0;
-    private double maxRawX = 0;
-    private double minRawY = 0;
-    private double maxRawY = 0;
-
-    /**
      * Define button layout representation implementing Base.TouchableElement.
      */
     private record CalcButton(String label, Rectangle bounds, Color color) implements TouchableElement {
@@ -68,28 +58,6 @@ public class TouchCalculator extends Base {
     }
 
     private CalcButton[] buttons;
-
-    /**
-     * Load calibration properties from disk.
-     *
-     * @throws Exception If file reading fails or properties are missing.
-     */
-    private void loadProperties() throws Exception {
-        final var props = new Properties();
-        final var fileName = "touch.properties";
-        try (final var in = new FileInputStream(fileName)) {
-            props.load(in);
-            minRawX = Double.parseDouble(props.getProperty("min.raw.x", "0"));
-            maxRawX = Double.parseDouble(props.getProperty("max.raw.x", "1000"));
-            minRawY = Double.parseDouble(props.getProperty("min.raw.y", "0"));
-            maxRawY = Double.parseDouble(props.getProperty("max.raw.y", "1000"));
-            log.info("Loaded touch calibration from {}: minX={}, maxX={}, minY={}, maxY={}",
-                    fileName, minRawX, maxRawX, minRawY, maxRawY);
-        } catch (final Exception e) {
-            log.error("Failed to load {}. Please run touch-calibrate first.", fileName);
-            throw e;
-        }
-    }
 
     /**
      * Initialize calculator button layout dynamically based on live display dimensions and orientation.
@@ -314,8 +282,7 @@ public class TouchCalculator extends Base {
      * @throws Exception If hardware communication fails.
      */
     private void runDemo(final AbstractColorDisplay display, final AbstractTouch touch) throws Exception {
-        loadProperties();
-        log.info("Calculator demo started...");
+        log.info("Calculator demo started using properties file: {}...", getTouchPropertiesFile());
 
         initButtons();
         drawUI(display);
@@ -328,7 +295,6 @@ public class TouchCalculator extends Base {
                     // Utilize base class abstractions for rotation mapping and hit-testing
                     final var hitElement = findTouchedElement(
                             rawPoint.x(), rawPoint.y(),
-                            minRawX, maxRawX, minRawY, maxRawY,
                             buttons
                     );
 
