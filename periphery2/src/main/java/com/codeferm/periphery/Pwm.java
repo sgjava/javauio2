@@ -96,6 +96,14 @@ public class Pwm extends AbstractDevice implements PwmDevice {
         try {
             checkError(Periphery.pwm_set_period_ns(getHandle(), periodNs), "set_period_ns");
             checkError(Periphery.pwm_set_duty_cycle_ns(getHandle(), dutyCycleNs), "set_duty_cycle_ns");
+            if (periodNs <= 0) {
+                throw new IllegalArgumentException("Period must be > 0");
+            }
+
+            if (dutyCycleNs < 0 || dutyCycleNs > periodNs) {
+                throw new IllegalArgumentException(
+                        "Duty cycle must be between 0 and period: " + dutyCycleNs);
+            }
         } finally {
             lock.unlock();
         }
@@ -163,11 +171,9 @@ public class Pwm extends AbstractDevice implements PwmDevice {
         lock.lock();
         try {
             if (getHandle().address() != 0) {
-                // Force state down to zero energy first so kernel generator doesn't freeze 'ON'
-                Periphery.pwm_set_duty_cycle_ns(getHandle(), 0L);
                 Periphery.pwm_disable(getHandle());
                 Periphery.pwm_close(getHandle());
-                log.debug("PWM hardware safely de-energized and closed.");
+                log.debug("PWM disabled and closed.");
             }
         } finally {
             lock.unlock();

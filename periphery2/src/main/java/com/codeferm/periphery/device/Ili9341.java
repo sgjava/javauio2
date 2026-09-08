@@ -18,11 +18,11 @@ import org.periphery.Periphery;
  * This driver provides a high-performance interface to the ILI9341 controller, utilizing {@link MemorySegment} for zero-copy data
  * transfers. Optimized with a zero-allocation strategy to prevent memory thrashing and OutOfMemoryErrors in tight loops. It
  * inherits automated safe-teardown from {@link AbstractDevice} and implements pixel and shape drawing via software rasterization.
- * Supports rotation orientations (0, 90, 180, 270 degrees).
+ * Supports rotation orientations (0, 90, 180, 270 degrees) and flexible LED backlight handling via GPIO or PWM.
  * </p>
  *
  * @author Steven P. Goldsmith
- * @version 1.1.0
+ * @version 1.2.0
  * @since 1.0.0
  */
 @Slf4j
@@ -160,13 +160,18 @@ public class Ili9341 extends AbstractColorDisplay {
     private final MemorySegment rstHandle;
 
     /**
-     * Backlight LED GPIO handle.
+     * Backlight LED GPIO handle (used if PWM is not configured).
      */
     @Getter
     private final MemorySegment ledHandle;
 
     /**
-     * Initializes hardware with SPI, DC, Reset, and LED handles via FFM using a default 64KB chunk buffer.
+     * Optional PWM backlight controller wrapper.
+     */
+    private final PwmBacklight pwmBacklight;
+
+    /**
+     * Initializes hardware with SPI, DC, Reset, and LED GPIO handles via FFM using a default 64KB chunk buffer.
      *
      * @param device SPI device path.
      * @param mode SPI mode.
@@ -182,7 +187,7 @@ public class Ili9341 extends AbstractColorDisplay {
     }
 
     /**
-     * Initializes hardware with SPI, DC, Reset, and LED handles via FFM with a configurable buffer size.
+     * Initializes hardware with SPI, DC, Reset, and LED GPIO handles via FFM with a configurable buffer size.
      *
      * @param device SPI device path.
      * @param mode SPI mode.
@@ -198,6 +203,7 @@ public class Ili9341 extends AbstractColorDisplay {
         super(240, 320, bufferSize);
         rstHandle = Periphery.gpio_new();
         ledHandle = Periphery.gpio_new();
+        pwmBacklight = null;
 
         if (rstHandle.address() == 0 || ledHandle.address() == 0) {
             throw new RuntimeException("Failed to allocate native Reset or LED GPIO handles");
@@ -217,6 +223,63 @@ public class Ili9341 extends AbstractColorDisplay {
         }
         if (Periphery.gpio_open(ledHandle, cGpioDev, ledPin, GPIO_DIR_OUT) < 0) {
             throw new RuntimeException("LED Backlight GPIO open failed");
+        }
+
+        setup();
+    }
+
+    /**
+     * Initializes hardware with SPI, DC, Reset handles, and a unified {@link PwmBacklight} via FFM using a default 64KB chunk
+     * buffer.
+     *
+     * @param device SPI device path.
+     * @param mode SPI mode.
+     * @param speed SPI speed in Hz.
+     * @param gpioDevice GPIO chip path.
+     * @param dcPin Data/Command pin number.
+     * @param rstPin Reset pin number.
+     * @param pwmBacklight Configured PWM backlight controller instance.
+     */
+    public Ili9341(final String device, final int mode, final int speed, final String gpioDevice, final int dcPin,
+            final int rstPin, final PwmBacklight pwmBacklight) {
+        this(device, mode, speed, gpioDevice, dcPin, rstPin, pwmBacklight, 65536);
+    }
+
+    /**
+     * Initializes hardware with SPI, DC, Reset handles, and a unified {@link PwmBacklight} via FFM with a configurable buffer size.
+     *
+     * @param device SPI device path.
+     * @param mode SPI mode.
+     * @param speed SPI speed in Hz.
+     * @param gpioDevice GPIO chip path.
+     * @param dcPin Data/Command pin number.
+     * @param rstPin Reset pin number.
+     * @param pwmBacklight Configured PWM backlight controller instance.
+     * @param bufferSize Transfer buffer chunk size in bytes.
+     */
+    public Ili9341(final String device, final int mode, final int speed, final String gpioDevice, final int dcPin,
+            final int rstPin, final PwmBacklight pwmBacklight, final int bufferSize) {
+        super(240, 320, bufferSize);
+        rstHandle = Periphery.gpio_new();
+        // Unused when PWM is selected, set to null memory segment safety placeholder
+        ledHandle = MemorySegment.NULL;
+        this.pwmBacklight = pwmBacklight;
+
+        if (rstHandle.address() == 0) {
+            throw new RuntimeException("Failed to allocate native Reset GPIO handle");
+        }
+
+        final var cDevice = getArena().allocateFrom(device);
+        final var cGpioDev = getArena().allocateFrom(gpioDevice);
+
+        if (Periphery.spi_open(getHandle(), cDevice, mode, speed) < 0) {
+            throw new RuntimeException("SPI open failed");
+        }
+        if (Periphery.gpio_open(getDcHandle(), cGpioDev, dcPin, GPIO_DIR_OUT) < 0) {
+            throw new RuntimeException("DC GPIO open failed");
+        }
+        if (Periphery.gpio_open(rstHandle, cGpioDev, rstPin, GPIO_DIR_OUT) < 0) {
+            throw new RuntimeException("Reset GPIO open failed");
         }
 
         setup();
@@ -305,7 +368,14 @@ public class Ili9341 extends AbstractColorDisplay {
      */
     public final void setup() {
         try {
-            Periphery.gpio_write(ledHandle, true);
+            // Conditional backlight initialization (PWM vs GPIO)
+            if (pwmBacklight != null) {
+                pwmBacklight.enable();
+                // Example initial brightness setting at 100% with standard 1ms period
+                pwmBacklight.setBrightness(1_000_000L, 1.0);
+            } else if (ledHandle.address() != 0) {
+                Periphery.gpio_write(ledHandle, true);
+            }
 
             Periphery.gpio_write(rstHandle, true);
             TimeUnit.MILLISECONDS.sleep(50);
@@ -454,20 +524,33 @@ public class Ili9341 extends AbstractColorDisplay {
     }
 
     /**
-     * Closes native SPI and GPIO resources safely during shutdown routines.
+     * Closes native SPI, GPIO, and optional PWM resources safely during shutdown routines.
      */
     @Override
     protected void closeNative() {
         log.debug("Closing ILI9341 LCD Display");
         try {
             if (getHandle().address() != 0 && getArena().scope().isAlive()) {
-                Periphery.gpio_write(ledHandle, false);
+                if (pwmBacklight != null) {
+                    pwmBacklight.disable();
+                } else if (ledHandle.address() != 0) {
+                    Periphery.gpio_write(ledHandle, false);
+                }
                 writeCommand(new byte[]{DISPOFF});
                 writeCommand(new byte[]{SLPIN});
             }
         } catch (final Exception e) {
             System.err.printf("Error turning off display during emergency close: %s%n", e.getMessage());
         } finally {
+            // Safely close the PWM backlight if it was provided
+            if (pwmBacklight != null) {
+                try {
+                    pwmBacklight.close();
+                } catch (final Exception e) {
+                    log.warn("Error closing PWM backlight: {}", e.getMessage());
+                }
+            }
+
             if (getHandle().address() != 0) {
                 Periphery.spi_close(getHandle());
             }

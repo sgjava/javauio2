@@ -8,6 +8,7 @@ import java.awt.image.DataBufferInt;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.util.concurrent.TimeUnit;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.periphery.Periphery;
 
@@ -16,11 +17,11 @@ import org.periphery.Periphery;
  * <p>
  * This driver provides a high-performance interface to the ST7789 controller, utilizing {@link MemorySegment} for zero-copy data
  * transfers. Optimized with a zero-allocation strategy to prevent memory thrashing and OutOfMemoryErrors in tight loops. Supports
- * optional hardware Reset (RST), Backlight (BL) pins, and display rotation.
+ * optional hardware Reset (RST), Backlight GPIO or PWM backlight brightness control, and display rotation.
  * </p>
  *
  * @author Steven P. Goldsmith
- * @version 1.1.0
+ * @version 1.3.0
  * @since 1.0.0
  */
 @Slf4j
@@ -141,13 +142,30 @@ public class St7789 extends AbstractColorDisplay {
      */
     public static final byte NVGAMCTRL = (byte) 0xE1;
 
+    /**
+     * Reset GPIO handle.
+     */
+    @Getter
     private final MemorySegment rstHandle;
-    private final MemorySegment blHandle;
-    private final boolean hasReset;
-    private final boolean hasBacklight;
 
     /**
-     * Initializes hardware with SPI and DC pin (no Reset or Backlight).
+     * Backlight LED GPIO handle (used if PWM is not configured).
+     */
+    @Getter
+    private final MemorySegment ledHandle;
+
+    /**
+     * Optional PWM backlight controller wrapper.
+     */
+    private final PwmBacklight pwmBacklight;
+
+    /**
+     * Indicates whether a reset pin is configured.
+     */
+    private final boolean hasReset;
+
+    /**
+     * Initializes hardware with SPI and DC pin (no Reset, Backlight, or PWM) using default buffer size.
      *
      * @param device SPI device path.
      * @param mode SPI mode.
@@ -160,22 +178,7 @@ public class St7789 extends AbstractColorDisplay {
     }
 
     /**
-     * Initializes hardware with SPI, DC pin, and custom buffer size (no Reset or Backlight).
-     *
-     * @param device SPI device path.
-     * @param mode SPI mode.
-     * @param speed SPI speed in Hz.
-     * @param gpioDevice GPIO chip path.
-     * @param dcPin Data/Command BCM pin number.
-     * @param bufferSize Transfer buffer chunk size in bytes.
-     */
-    public St7789(final String device, final int mode, final int speed, final String gpioDevice, final int dcPin,
-            final int bufferSize) {
-        this(device, mode, speed, gpioDevice, dcPin, -1, -1, bufferSize);
-    }
-
-    /**
-     * Initializes hardware with SPI, DC pin, Reset pin, and Backlight pin using default buffer size.
+     * Initializes hardware with SPI, DC pin, Reset pin, and Backlight GPIO pin using default buffer size.
      *
      * @param device SPI device path.
      * @param mode SPI mode.
@@ -183,15 +186,15 @@ public class St7789 extends AbstractColorDisplay {
      * @param gpioDevice GPIO chip path.
      * @param dcPin Data/Command BCM pin number.
      * @param rstPin Reset BCM pin number (or -1 if unused).
-     * @param blPin Backlight BCM pin number (or -1 if unused).
+     * @param ledPin Backlight BCM pin number (or -1 if unused).
      */
     public St7789(final String device, final int mode, final int speed, final String gpioDevice, final int dcPin,
-            final int rstPin, final int blPin) {
-        this(device, mode, speed, gpioDevice, dcPin, rstPin, blPin, 65536);
+            final int rstPin, final int ledPin) {
+        this(device, mode, speed, gpioDevice, dcPin, rstPin, ledPin, 65536);
     }
 
     /**
-     * Initializes hardware with SPI, DC pin, Reset pin, Backlight pin, and configurable buffer size.
+     * Initializes hardware with SPI, DC pin, Reset pin, and Backlight GPIO pin with a configurable buffer size.
      *
      * @param device SPI device path.
      * @param mode SPI mode.
@@ -199,16 +202,23 @@ public class St7789 extends AbstractColorDisplay {
      * @param gpioDevice GPIO chip path.
      * @param dcPin Data/Command BCM pin number.
      * @param rstPin Reset BCM pin number (or -1 if unused).
-     * @param blPin Backlight BCM pin number (or -1 if unused).
+     * @param ledPin Backlight BCM pin number (or -1 if unused).
      * @param bufferSize Transfer buffer chunk size in bytes.
      */
     public St7789(final String device, final int mode, final int speed, final String gpioDevice, final int dcPin,
-            final int rstPin, final int blPin, final int bufferSize) {
+            final int rstPin, final int ledPin, final int bufferSize) {
         super(240, 320, bufferSize);
         this.hasReset = rstPin >= 0;
-        this.hasBacklight = blPin >= 0;
         this.rstHandle = hasReset ? Periphery.gpio_new() : MemorySegment.NULL;
-        this.blHandle = hasBacklight ? Periphery.gpio_new() : MemorySegment.NULL;
+        this.ledHandle = ledPin >= 0 ? Periphery.gpio_new() : MemorySegment.NULL;
+        this.pwmBacklight = null;
+
+        if (hasReset && rstHandle.address() == 0) {
+            throw new RuntimeException("Failed to allocate native Reset GPIO handle");
+        }
+        if (ledPin >= 0 && ledHandle.address() == 0) {
+            throw new RuntimeException("Failed to allocate native LED Backlight GPIO handle");
+        }
 
         final var cDevice = getArena().allocateFrom(device);
         final var cGpioDev = getArena().allocateFrom(gpioDevice);
@@ -223,9 +233,66 @@ public class St7789 extends AbstractColorDisplay {
                 throw new RuntimeException("RST GPIO open failed");
             }
         }
-        if (hasBacklight) {
-            if (Periphery.gpio_open(blHandle, cGpioDev, blPin, GPIO_DIR_OUT) < 0) {
-                throw new RuntimeException("BL GPIO open failed");
+        if (ledPin >= 0) {
+            if (Periphery.gpio_open(ledHandle, cGpioDev, ledPin, GPIO_DIR_OUT) < 0) {
+                throw new RuntimeException("LED Backlight GPIO open failed");
+            }
+        }
+        setup();
+    }
+
+    /**
+     * Initializes hardware with SPI, DC, Reset handles, and a unified {@link PwmBacklight} via FFM using a default 64KB chunk
+     * buffer.
+     *
+     * @param device SPI device path.
+     * @param mode SPI mode.
+     * @param speed SPI speed in Hz.
+     * @param gpioDevice GPIO chip path.
+     * @param dcPin Data/Command pin number.
+     * @param rstPin Reset pin number.
+     * @param pwmBacklight Configured PWM backlight controller instance.
+     */
+    public St7789(final String device, final int mode, final int speed, final String gpioDevice, final int dcPin,
+            final int rstPin, final PwmBacklight pwmBacklight) {
+        this(device, mode, speed, gpioDevice, dcPin, rstPin, pwmBacklight, 65536);
+    }
+
+    /**
+     * Initializes hardware with SPI, DC, Reset handles, and a unified {@link PwmBacklight} via FFM with a configurable buffer size.
+     *
+     * @param device SPI device path.
+     * @param mode SPI mode.
+     * @param speed SPI speed in Hz.
+     * @param gpioDevice GPIO chip path.
+     * @param dcPin Data/Command pin number.
+     * @param rstPin Reset pin number.
+     * @param pwmBacklight Configured PWM backlight controller instance.
+     * @param bufferSize Transfer buffer chunk size in bytes.
+     */
+    public St7789(final String device, final int mode, final int speed, final String gpioDevice, final int dcPin,
+            final int rstPin, final PwmBacklight pwmBacklight, final int bufferSize) {
+        super(240, 320, bufferSize);
+        this.hasReset = rstPin >= 0;
+        this.rstHandle = hasReset ? Periphery.gpio_new() : MemorySegment.NULL;
+        this.ledHandle = MemorySegment.NULL;
+        this.pwmBacklight = pwmBacklight;
+
+        if (hasReset && rstHandle.address() == 0) {
+            throw new RuntimeException("Failed to allocate native Reset GPIO handle");
+        }
+
+        final var cDevice = getArena().allocateFrom(device);
+        final var cGpioDev = getArena().allocateFrom(gpioDevice);
+        if (Periphery.spi_open(getHandle(), cDevice, mode, speed) < 0) {
+            throw new RuntimeException("SPI open failed");
+        }
+        if (Periphery.gpio_open(getDcHandle(), cGpioDev, dcPin, GPIO_DIR_OUT) < 0) {
+            throw new RuntimeException("DC GPIO open failed");
+        }
+        if (hasReset) {
+            if (Periphery.gpio_open(rstHandle, cGpioDev, rstPin, GPIO_DIR_OUT) < 0) {
+                throw new RuntimeException("RST GPIO open failed");
             }
         }
         setup();
@@ -312,14 +379,18 @@ public class St7789 extends AbstractColorDisplay {
      */
     public final void setup() {
         try {
+            if (pwmBacklight != null) {
+                pwmBacklight.enable();
+                pwmBacklight.setBrightness(1_000_000L, 1.0);
+            } else if (ledHandle.address() != 0) {
+                Periphery.gpio_write(ledHandle, true);
+            }
+
             if (hasReset) {
                 Periphery.gpio_write(rstHandle, false);
                 TimeUnit.MILLISECONDS.sleep(20);
                 Periphery.gpio_write(rstHandle, true);
                 TimeUnit.MILLISECONDS.sleep(150);
-            }
-            if (hasBacklight) {
-                Periphery.gpio_write(blHandle, true);
             }
             Periphery.gpio_write(getDcHandle(), false);
             TimeUnit.MILLISECONDS.sleep(150);
@@ -459,22 +530,32 @@ public class St7789 extends AbstractColorDisplay {
     }
 
     /**
-     * Closes native SPI and GPIO resources safely during shutdown routines.
+     * Closes native SPI, GPIO, and PWM resources safely during shutdown routines.
      */
     @Override
     protected void closeNative() {
         log.debug("Closing ST7789 LCD Display");
         try {
             if (getHandle().address() != 0 && getArena().scope().isAlive()) {
+                if (pwmBacklight != null) {
+                    pwmBacklight.disable();
+                } else if (ledHandle.address() != 0) {
+                    Periphery.gpio_write(ledHandle, false);
+                }
                 writeCommand(new byte[]{DISPOFF});
                 writeCommand(new byte[]{SLPIN});
-                if (hasBacklight && blHandle.address() != 0) {
-                    Periphery.gpio_write(blHandle, false);
-                }
             }
         } catch (final Exception e) {
             System.err.printf("Error turning off display during emergency close: %s%n", e.getMessage());
         } finally {
+            if (pwmBacklight != null) {
+                try {
+                    pwmBacklight.close();
+                } catch (final Exception e) {
+                    log.warn("Error closing PWM backlight: {}", e.getMessage());
+                }
+            }
+
             if (getHandle().address() != 0) {
                 Periphery.spi_close(getHandle());
             }
@@ -485,9 +566,9 @@ public class St7789 extends AbstractColorDisplay {
                 Periphery.gpio_close(rstHandle);
                 Periphery.gpio_free(rstHandle);
             }
-            if (hasBacklight && blHandle.address() != 0) {
-                Periphery.gpio_close(blHandle);
-                Periphery.gpio_free(blHandle);
+            if (ledHandle.address() != 0) {
+                Periphery.gpio_close(ledHandle);
+                Periphery.gpio_free(ledHandle);
             }
         }
     }

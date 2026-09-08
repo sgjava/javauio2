@@ -7,6 +7,8 @@ import com.codeferm.periphery.NativeLoader;
 import com.codeferm.periphery.device.AbstractColorDisplay;
 import com.codeferm.periphery.device.AbstractTouch;
 import com.codeferm.periphery.device.Ili9341;
+import com.codeferm.periphery.device.PwmBacklight;
+import com.codeferm.periphery.device.PwmDeviceFactory;
 import com.codeferm.periphery.device.Ssd1331;
 import com.codeferm.periphery.device.St7789;
 import com.codeferm.periphery.device.Xpt2046;
@@ -28,12 +30,12 @@ import picocli.CommandLine.Option;
  * Unified base CLI provider for hardware display and touch demonstrations (u8g2 style).
  * <p>
  * Handles FFM native library loading, SPI/GPIO initialization for both display and touch controllers, calibration properties
- * management, and provides a unified Java2D {@link Graphics2D} drawing surface, along with generic touch rotation mapping and
- * hit-testing abstractions.
+ * management, and provides a unified Java2D {@link Graphics2D} drawing surface, along with generic touch rotation mapping,
+ * hit-testing abstractions, and flexible PWM backlight support with HW/SW modes and inversion.
  * </p>
  *
  * @author Steven P. Goldsmith
- * @version 1.0.0
+ * @version 1.1.0
  * @since 1.0.0
  */
 @Data
@@ -83,6 +85,25 @@ public abstract class Base implements Callable<Integer> {
 
     @Option(names = {"-led", "--led-line"}, description = "LED backlight line (ILI9341), ${DEFAULT-VALUE} by default.")
     private int led = 24;
+
+    // --- PWM Backlight Configuration Options ---
+    @Option(names = {"--pwm-backlight"}, description = "Use PWM for backlight instead of GPIO, ${DEFAULT-VALUE} by default.")
+    private boolean pwmBacklightEnabled = false;
+
+    @Option(names = {"--pwm-mode"}, description = "PWM operation mode: HW or SW, ${DEFAULT-VALUE} by default.")
+    private String pwmMode = "HW";
+
+    @Option(names = {"--pwm-device"}, description = "PWM chip or GPIO device, ${DEFAULT-VALUE} by default.")
+    private String pwmDevice = "0";
+
+    @Option(names = {"--pwm-channel"}, description = "PWM channel or GPIO line, ${DEFAULT-VALUE} by default.")
+    private int pwmChannel = 0;
+
+    @Option(names = {"--pwm-period"}, description = "PWM period in nanoseconds, ${DEFAULT-VALUE} by default.")
+    private long pwmPeriod = 1_000_000L;
+
+    @Option(names = {"--pwm-inverted"}, description = "Invert PWM polarity (active-low), ${DEFAULT-VALUE} by default.")
+    private boolean pwmInverted = false;
 
     @Option(names = {"-b", "--buffer-size"}, description = "SPI transfer buffer chunk size in bytes, ${DEFAULT-VALUE} by default.")
     private int bufferSize = 65536;
@@ -259,10 +280,28 @@ public abstract class Base implements Callable<Integer> {
     public Integer call() throws Exception {
         log.info("Initializing display type {} on {} (speed: {}Hz, rotation: {}°)", displayType, device, speed, rotation);
         final var targetDisplay = switch (displayType != null ? displayType.toUpperCase() : "") {
-            case "ST7789" ->
-                new St7789(device, mode, speed, gpioDevice, dc, bufferSize);
-            case "ILI9341" ->
-                new Ili9341(device, mode, speed, gpioDevice, dc, res, led, bufferSize);
+            case "ST7789" -> {
+                if (pwmBacklightEnabled) {
+                    final var pwmDeviceInstance = PwmDeviceFactory.create(pwmMode, pwmDevice, pwmChannel);
+                    final var backlight = new PwmBacklight(pwmDeviceInstance, pwmInverted);
+                    backlight.setBrightness(pwmPeriod, 1.0);
+                    backlight.enable();
+                    yield new St7789(device, mode, speed, gpioDevice, dc, res, backlight, bufferSize);
+                } else {
+                    yield new St7789(device, mode, speed, gpioDevice, dc, res, led, bufferSize);
+                }
+            }
+            case "ILI9341" -> {
+                if (pwmBacklightEnabled) {
+                    final var pwmDeviceInstance = PwmDeviceFactory.create(pwmMode, pwmDevice, pwmChannel);
+                    final var backlight = new PwmBacklight(pwmDeviceInstance, pwmInverted);
+                    backlight.setBrightness(pwmPeriod, 1.0);
+                    backlight.enable();
+                    yield new Ili9341(device, mode, speed, gpioDevice, dc, res, backlight, bufferSize);
+                } else {
+                    yield new Ili9341(device, mode, speed, gpioDevice, dc, res, led, bufferSize);
+                }
+            }
             case "SSD1331" ->
                 new Ssd1331(device, mode, speed, gpioDevice, dc, res);
             default ->

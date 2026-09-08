@@ -37,7 +37,7 @@ public interface PwmDevice extends AutoCloseable {
     /**
      * Utility method to set pulse based on duty cycle percentage.
      *
-     * * @param periodNs Total period of the signal in nanoseconds.
+     * @param periodNs Total period of the signal in nanoseconds.
      * @param percentage Duty cycle percentage (0.0 to 1.0).
      */
     default void setDutyCycle(final long periodNs, final double percentage) {

@@ -5,6 +5,7 @@ package com.codeferm.periphery;
 
 import com.codeferm.periphery.device.AbstractDevice;
 import com.codeferm.periphery.device.PwmDevice;
+import java.lang.foreign.Arena;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 import lombok.extern.slf4j.Slf4j;
@@ -12,10 +13,10 @@ import org.periphery.Periphery;
 import org.periphery.gpio_handle;
 
 /**
- * Software-based Pulse Width Modulation (PWM) implementation using FFM and a high-priority dedicated thread.
+ * Software PWM implementation using a GPIO and a dedicated high-priority thread via Project Panama FFM.
  * <p>
- * This class provides PWM functionality for GPIO pins that do not have hardware PWM support. It uses a precision busy-wait loop to
- * maintain timing accuracy and inherits automated safe-teardown from {@link AbstractDevice}.
+ * Logical states: true = ON, false = OFF. When inverted is true, logical ON maps to GPIO LOW and logical OFF maps to GPIO HIGH. It
+ * inherits automated lifecycle cleanup from {@link AbstractDevice}.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -26,180 +27,309 @@ import org.periphery.gpio_handle;
 public class SoftPwm extends AbstractDevice implements PwmDevice {
 
     /**
-     * GPIO direction output constant from c-periphery.
+     * Successful operation constant from c-periphery.
      */
-    private static final int GPIO_DIR_OUT = 1;
+    public static final int GPIO_SUCCESS = 0;
 
     /**
-     * Dedicated thread for generating the pulse signal.
-     */
-    private final Thread pulseThread;
-
-    /**
-     * Atomic flag to control the lifecycle of the pulse thread.
-     */
-    private final AtomicBoolean running = new AtomicBoolean(true);
-
-    /**
-     * Atomic flag to enable or disable the signal output.
-     */
-    private final AtomicBoolean enabled = new AtomicBoolean(false);
-
-    /**
-     * Lock to ensure thread-safe access to native write operations.
+     * Lock for thread-safe state and timing synchronization.
      */
     private final ReentrantLock lock = new ReentrantLock();
 
     /**
-     * Current period in nanoseconds.
+     * Flag indicating whether the software thread loop should execute.
      */
-    private volatile long periodNs = 10_000_000L;
+    private final AtomicBoolean running = new AtomicBoolean(true);
 
     /**
-     * Current duty cycle in nanoseconds.
+     * Flag indicating whether the PWM output signal is currently enabled.
+     */
+    private final AtomicBoolean enabled = new AtomicBoolean(false);
+
+    /**
+     * Specifies if the GPIO line is active-low (inverted).
+     */
+    private final boolean inverted;
+
+    /**
+     * Dedicated high-priority background thread handling signal timing.
+     */
+    private final Thread thread;
+
+    /**
+     * Signal period in nanoseconds.
+     */
+    private volatile long periodNs = 1_000_000L;
+
+    /**
+     * Signal duty cycle width in nanoseconds.
      */
     private volatile long dutyCycleNs = 0L;
 
     /**
-     * Constructs a software PWM controller for a specific GPIO line.
+     * Creates a non-inverted software PWM instance.
      *
-     * @param device GPIO device path (e.g., "/dev/gpiochip0").
+     * @param device GPIO chip/device path (e.g., "/dev/gpiochip0").
      * @param line GPIO line offset.
-     * @throws RuntimeException If the GPIO device cannot be opened.
      */
     public SoftPwm(final String device, final int line) {
-        // Passes layout up to handle automated registration and memory tracking
-        super(gpio_handle.layout());
-
-        final var cDevice = getArena().allocateFrom(device);
-
-        if (Periphery.gpio_open(getHandle(), cDevice, line, GPIO_DIR_OUT) < 0) {
-            final var error = Periphery.gpio_errmsg(getHandle()).getString(0);
-            if (getArena().scope().isAlive()) {
-                getArena().close();
-            }
-            throw new RuntimeException("Failed to open GPIO line %d: %s".formatted(line, error));
-        }
-
-        this.pulseThread = new Thread(this::pulseLoop, "SoftPwm-Line" + line);
-        this.pulseThread.setPriority(Thread.MAX_PRIORITY);
-        this.pulseThread.start();
-
-        log.debug("Software PWM started on line {}", line);
+        this(device, line, false);
     }
 
     /**
-     * Enables the PWM signal output.
+     * Creates a software PWM instance with explicit inversion control.
+     *
+     * @param device GPIO chip/device path (e.g., "/dev/gpiochip0").
+     * @param line GPIO line offset.
+     * @param inverted True if the GPIO circuit is active-low.
+     */
+    public SoftPwm(
+            final String device,
+            final int line,
+            final boolean inverted
+    ) {
+        super(gpio_handle.layout());
+
+        this.inverted = inverted;
+
+        try (final var arena = Arena.ofConfined()) {
+            final var deviceSegment = arena.allocateFrom(device);
+            // Pass direction constant according to c-periphery bindings (GPIO_DIR_OUT)
+            final var result = Periphery.gpio_open(
+                    getHandle(),
+                    deviceSegment,
+                    line,
+                    Periphery.GPIO_DIR_OUT()
+            );
+
+            if (result != GPIO_SUCCESS) {
+                final var error = getErrorMessage();
+                if (getArena().scope().isAlive()) {
+                    getArena().close();
+                }
+                throw new RuntimeException("Failed to open GPIO device %s line %d: %s".formatted(device, line, error));
+            }
+        }
+
+        // Start in the logical OFF state.
+        write(false);
+
+        thread = Thread.ofPlatform()
+                .name("soft-pwm")
+                .priority(Thread.MAX_PRIORITY)
+                .start(this::run);
+
+        log.debug("Software PWM initialized on device {}, line {}, inverted: {}", device, line, inverted);
+    }
+
+    /**
+     * Enables the software PWM output signal.
      */
     @Override
     public void enable() {
-        enabled.set(true);
-    }
-
-    /**
-     * Disables the PWM signal output and sets the pin to LOW.
-     */
-    @Override
-    public void disable() {
-        enabled.set(false);
-        write(false);
-    }
-
-    /**
-     * Sets the period and duty cycle for the software pulse.
-     *
-     * @param periodNs Total signal period in nanoseconds.
-     * @param dutyCycleNs Signal high-time in nanoseconds.
-     */
-    @Override
-    public void setPulse(final long periodNs, final long dutyCycleNs) {
-        this.periodNs = periodNs;
-        this.dutyCycleNs = dutyCycleNs;
-    }
-
-    /**
-     * Internal pulse loop. Uses spin-waiting to minimize jitter.
-     */
-    private void pulseLoop() {
-        while (running.get()) {
-            if (enabled.get()) {
-                final var p = periodNs;
-                final var d = dutyCycleNs;
-
-                if (d > 0) {
-                    write(true);
-                    busyWait(d);
-                }
-                if (d < p) {
-                    write(false);
-                    busyWait(p - d);
-                }
-            } else {
-                // Yield CPU when disabled to avoid unnecessary power consumption
-                Thread.onSpinWait();
-            }
-        }
-    }
-
-    /**
-     * Writes the state to the GPIO pin using the native c-periphery call. Guarded with a ReentrantLock to secure segment safety
-     * during thread cleanup.
-     *
-     * @param state True for HIGH, false for LOW.
-     */
-    private void write(final boolean state) {
         lock.lock();
         try {
-            // Check scope health inside lock to prevent race conditions during close
-            if (getHandle().address() != 0 && getArena().scope().isAlive()) {
-                Periphery.gpio_write(getHandle(), state);
-            }
+            enabled.set(true);
+            log.debug("Software PWM enabled");
         } finally {
             lock.unlock();
         }
     }
 
     /**
-     * Performs a high-precision busy wait for the specified nanoseconds.
-     *
-     * @param ns Time to wait in nanoseconds.
+     * Disables the software PWM output and forces the logical OFF state.
      */
-    private void busyWait(final long ns) {
+    @Override
+    public void disable() {
+        lock.lock();
+        try {
+            enabled.set(false);
+            write(false);
+            log.debug("Software PWM disabled");
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Sets the PWM period and duty cycle parameters in nanoseconds.
+     *
+     * @param periodNs Total period of the signal in nanoseconds.
+     * @param dutyCycleNs High-time of the signal in nanoseconds.
+     */
+    @Override
+    public void setPulse(
+            final long periodNs,
+            final long dutyCycleNs
+    ) {
+        if (periodNs <= 0) {
+            throw new IllegalArgumentException(
+                    "periodNs must be greater than zero"
+            );
+        }
+
+        if (dutyCycleNs < 0 || dutyCycleNs > periodNs) {
+            throw new IllegalArgumentException(
+                    "dutyCycleNs must be between 0 and periodNs"
+            );
+        }
+
+        this.periodNs = periodNs;
+        this.dutyCycleNs = dutyCycleNs;
+    }
+
+    /**
+     * Returns whether this software PWM transport is active-low.
+     *
+     * @return True if inverted.
+     */
+    public boolean isInverted() {
+        return inverted;
+    }
+
+    /**
+     * Background worker thread managing high-precision software signal pulsing.
+     */
+    private void run() {
+        while (running.get()) {
+
+            if (!enabled.get()) {
+                write(false);
+                Thread.onSpinWait();
+                continue;
+            }
+
+            final var period = periodNs;
+            final var duty = dutyCycleNs;
+
+            /*
+             * 0% duty = logically OFF.
+             */
+            if (duty <= 0) {
+                write(false);
+                waitNanos(period);
+                continue;
+            }
+
+            /*
+             * 100% duty = logically ON.
+             */
+            if (duty >= period) {
+                write(true);
+                waitNanos(period);
+                continue;
+            }
+
+            final var start = System.nanoTime();
+
+            // Logical ON.
+            write(true);
+
+            // ON duration.
+            waitUntil(start + duty);
+
+            // Logical OFF.
+            write(false);
+
+            // OFF duration.
+            waitUntil(start + period);
+        }
+
+        // Always leave GPIO in logical OFF state upon thread exit.
+        write(false);
+    }
+
+    /**
+     * Busy-wait for the specified duration to optimize real-time timing accuracy.
+     *
+     * @param nanos Duration in nanoseconds.
+     */
+    private void waitNanos(final long nanos) {
         final var start = System.nanoTime();
-        while (System.nanoTime() - start < ns && running.get()) {
+        waitUntil(start + nanos);
+    }
+
+    /**
+     * Busy-wait until an absolute System.nanoTime() deadline.
+     *
+     * @param deadline Target absolute nanosecond timestamp.
+     */
+    private void waitUntil(final long deadline) {
+        while (running.get()) {
+            final var remaining = deadline - System.nanoTime();
+
+            if (remaining <= 0) {
+                return;
+            }
+
             Thread.onSpinWait();
         }
     }
 
     /**
-     * Template implementation called by AbstractDevice. Coordinates the safe destruction of the generator thread before dropping
-     * file nodes.
+     * Writes a logical GPIO state, taking polarity inversion into account.
+     *
+     * @param state Logical state (true = ON, false = OFF).
+     */
+    private void write(final boolean state) {
+        final var physicalState = inverted ? !state : state;
+
+        checkError(
+                Periphery.gpio_write(
+                        getHandle(),
+                        physicalState
+                ),
+                "gpio_write"
+        );
+    }
+
+    /**
+     * Retrieves a human-readable error message from the native handle.
+     *
+     * @return Error message string.
+     */
+    public String getErrorMessage() {
+        final var ptr = Periphery.gpio_errmsg(getHandle());
+        return ptr.address() == 0 ? "Unknown error" : ptr.getString(0);
+    }
+
+    /**
+     * Checks c-periphery return codes and throws runtime exceptions on failure.
+     *
+     * @param result Native return code.
+     * @param op Operation name for context.
+     */
+    @Override
+    protected void checkError(final int result, final String op) {
+        if (result < GPIO_SUCCESS) {
+            throw new RuntimeException("GPIO %s failed: %s".formatted(op, getErrorMessage()));
+        }
+    }
+
+    /**
+     * Stops the worker thread, forces GPIO OFF, and releases native resources safely via {@link AbstractDevice}.
      */
     @Override
     protected void closeNative() {
-        log.debug("Closing Software PWM and stopping generator thread");
-
-        // 1. Signal the pulse loop thread to break its execution boundaries
-        running.set(false);
-        enabled.set(false);
-
-        // 2. Join the thread to guarantee it has left the spin-wait and write blocks
-        try {
-            if (pulseThread.isAlive()) {
-                pulseThread.join(150);
-            }
-        } catch (final InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.error("Interrupted while stopping software PWM thread: {}", e.getMessage());
-        }
-
-        // 3. Acquire lock to perform safe hardware termination and close handles
         lock.lock();
         try {
             if (getHandle().address() != 0) {
-                Periphery.gpio_write(getHandle(), false);
+                running.set(false);
+                enabled.set(false);
+
+                if (Thread.currentThread() != thread) {
+                    try {
+                        thread.join(150);
+                    } catch (final InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+
+                // Force logical OFF; write() handles polarity.
+                write(false);
+
                 Periphery.gpio_close(getHandle());
-                log.debug("Software PWM hardware line dropped LOW and closed cleanly.");
+                log.debug("Software PWM GPIO closed.");
             }
         } finally {
             lock.unlock();
