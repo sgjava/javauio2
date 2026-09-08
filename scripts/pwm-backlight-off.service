@@ -1,0 +1,20 @@
+[Unit]
+Description=Turn PWM backlight off at boot
+After=systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '\
+    if [ ! -d /sys/class/pwm/pwmchip0/pwm0 ]; then \
+        echo 0 > /sys/class/pwm/pwmchip0/export; \
+        sleep 0.1; \
+    fi; \
+    echo 1000000 > /sys/class/pwm/pwmchip0/pwm0/period; \
+    echo 1000000 > /sys/class/pwm/pwmchip0/pwm0/duty_cycle; \
+    echo 1 > /sys/class/pwm/pwmchip0/pwm0/enable \
+'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

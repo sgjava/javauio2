@@ -11,25 +11,32 @@
 
 set -e
 
-# Initialize logfile variable to prevent unbound variable errors
 logfile="/tmp/uio-setup.log"
 
 echo "--- Setting up Java UIO 2 Permissions ---"
 
+# --------------------------------------------------
 # 1. Group Setup
+# --------------------------------------------------
+
 sudo groupadd -f uio
 sudo usermod -a -G uio "$USER"
 sudo usermod -a -G dialout "$USER"
 
+# --------------------------------------------------
 # 2. Create the Permissions Script
+# --------------------------------------------------
+
 echo "Creating /usr/local/bin/uio-permissions.sh..."
+
 sudo tee /usr/local/bin/uio-permissions.sh > /dev/null <<'EOF'
 #!/bin/sh
-# Set permissions to uio group for device nodes
+
+# Set permissions for device nodes
 chown -R root:uio /dev/mem /dev/gpiochip* /dev/i2c* /dev/spidev*
 chmod -R ug+rw /dev/mem /dev/gpiochip* /dev/i2c* /dev/spidev*
 
-# Set permissions for LED paths
+# Set permissions for LED sysfs paths
 if [ -d /sys/devices/platform/leds/leds ]; then
     chown -R root:uio /sys/devices/platform/leds/leds
     chmod -R ug+rw /sys/devices/platform/leds/leds
@@ -40,31 +47,88 @@ EOF
 
 sudo chmod +x /usr/local/bin/uio-permissions.sh
 
-# 3. Create Systemd Service
-echo "Creating uio-permissions.service..."
-sudo tee /etc/systemd/system/uio-permissions.service > /dev/null <<EOT
-[Unit]
-Description=Java UIO 2 Permissions Service
-After=multi-user.target
+# --------------------------------------------------
+# 3. Install PWM Backlight Startup Service
+# --------------------------------------------------
 
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/uio-permissions.sh
-RemainAfterExit=yes
+echo "Installing pwm-backlight-off.service..."
 
-[Install]
-WantedBy=multi-user.target
-EOT
+if [ -f "pwm-backlight-off.service" ]; then
+    sudo cp pwm-backlight-off.service /etc/systemd/system/
+    sudo chmod 644 /etc/systemd/system/pwm-backlight-off.service
+else
+    echo "Error: pwm-backlight-off.service not found in current directory!" >&2
+    exit 1
+fi
 
-# 4. Enable and Start
-echo "Applying changes and starting service..."
+# --------------------------------------------------
+# 4. Install udev Rules
+# --------------------------------------------------
+
+echo "Installing udev rules..."
+
+if [ -f "98-sysfs.rules" ]; then
+    echo "Installing 98-sysfs.rules..."
+    sudo cp 98-sysfs.rules /etc/udev/rules.d/
+else
+    echo "Error: 98-sysfs.rules not found!" >&2
+    exit 1
+fi
+
+if [ -f "99-pwm0.rules" ]; then
+    echo "Installing 99-pwm0.rules..."
+    sudo cp 99-pwm0.rules /etc/udev/rules.d/
+else
+    echo "Error: 99-pwm0.rules not found!" >&2
+    exit 1
+fi
+
+# --------------------------------------------------
+# 5. Reload systemd and udev
+# --------------------------------------------------
+
+echo "Reloading systemd and udev..."
+
 sudo systemctl daemon-reload
-sudo systemctl enable uio-permissions.service
-sudo systemctl start uio-permissions.service
+sudo udevadm control --reload-rules
+sudo udevadm trigger
 
-# 5. Copy udev rules 
-sudo cp 98-sysfs.rules /etc/udev/rules.d/. >> "$logfile" 2>&1
-sudo cp 99-pwm.rules /etc/udev/rules.d/. >> "$logfile" 2>&1
+# --------------------------------------------------
+# 6. Enable Services
+# --------------------------------------------------
 
+echo "Enabling PWM backlight startup service..."
+
+sudo systemctl enable pwm-backlight-off.service
+
+# --------------------------------------------------
+# 9. Apply UIO Permissions Now
+# --------------------------------------------------
+
+echo "Applying UIO permissions..."
+
+sudo /usr/local/bin/uio-permissions.sh
+
+# --------------------------------------------------
+# 9. Start PWM Backlight Service
+# --------------------------------------------------
+
+echo "Turning backlight off..."
+
+sudo systemctl restart pwm-backlight-off.service
+
+echo
 echo "--- Setup Complete ---"
-echo "MMIO access (/dev/mem) and GPIO access are now available to the uio group."
+echo
+echo "Configured:"
+echo "  UIO group permissions"
+echo "  GPIO permissions"
+echo "  I2C permissions"
+echo "  SPI permissions"
+echo "  MMIO permissions"
+echo "  LED sysfs permissions"
+echo "  PWM udev permissions"
+echo "  PWM backlight OFF at boot"
+echo
+echo "Current PWM permissions:"
+ls -l /sys/class/pwm/pwmchip0/pwm0/{period,duty_cycle,enable} 2>/dev/null || true

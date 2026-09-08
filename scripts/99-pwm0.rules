@@ -1,0 +1,24 @@
+# --------------------------------------------------
+# PWM chip lifecycle
+# Allow uio group to export/unexport PWM channels
+# --------------------------------------------------
+
+SUBSYSTEM=="pwm", KERNEL=="pwmchip0", \
+    RUN+="/bin/chown root:uio /sys/class/pwm/pwmchip0/export", \
+    RUN+="/bin/chown root:uio /sys/class/pwm/pwmchip0/unexport", \
+    RUN+="/bin/chmod g+w /sys/class/pwm/pwmchip0/export", \
+    RUN+="/bin/chmod g+w /sys/class/pwm/pwmchip0/unexport"
+
+
+# --------------------------------------------------
+# PWM channel lifecycle
+# Restore permissions after pwm0 is exported
+# --------------------------------------------------
+
+SUBSYSTEM=="pwm", KERNEL=="pwmchip0", ACTION=="change", ENV{EXPORT}=="pwm0", \
+    RUN+="/bin/chown root:uio /sys/class/pwm/pwmchip0/pwm0/period", \
+    RUN+="/bin/chown root:uio /sys/class/pwm/pwmchip0/pwm0/duty_cycle", \
+    RUN+="/bin/chown root:uio /sys/class/pwm/pwmchip0/pwm0/enable", \
+    RUN+="/bin/chmod g+w /sys/class/pwm/pwmchip0/pwm0/period", \
+    RUN+="/bin/chmod g+w /sys/class/pwm/pwmchip0/pwm0/duty_cycle", \
+    RUN+="/bin/chmod g+w /sys/class/pwm/pwmchip0/pwm0/enable"
