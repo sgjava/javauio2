@@ -9,7 +9,7 @@ user_overlays=pine64-dual-spi
 
 Compile and apply the overlay:
 
-sudo dtc -I dts -O dtb -o /boot/overlay-user/pine64-dual-spi.dtbo pine64-dual-spi.dts
+sudo armbian-add-overlay pine64-dual-spi.dts
 
 Reboot the board:
 

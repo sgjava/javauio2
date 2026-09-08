@@ -1,0 +1,32 @@
+1. Create the Custom Overlay Source
+
+sudo nano pine64-pwm.dts
+
+Paste the configuration into the file
+
+Save and exit (Ctrl+O, Enter, Ctrl+X).
+
+2. Compile and Apply the Overlay
+
+sudo armbian-add-overlay pine64-pwm.dts
+
+3. Update armbianEnv.txt
+
+sudo nano /boot/armbianEnv.txt
+
+Locate the user_overlays= line and append pine64-pwm (separated by a space if you have existing user overlays like your dual SPI):
+
+user_overlays=pine64-dual-spi pine64-pwm
+
+Save and exit.
+
+4. Reboot and Verify
+
+sudo reboot
+
+After booting back up, check if the PWM subsystem is active in userspace:
+
+ls -l /sys/class/pwm/
+dmesg | grep -i pwm
+
+This should be physical pin 7 on the Pine A64

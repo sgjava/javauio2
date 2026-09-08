@@ -1,0 +1,13 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "allwinner,sun50i-a64";
+
+    fragment@0 {
+        target = <&r_pwm>;
+        __overlay__ {
+            status = "okay";
+        };
+    };
+};
