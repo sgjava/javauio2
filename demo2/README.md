@@ -24,7 +24,8 @@ Hardware acceleration is implemented directly at the display driver level where 
 
 ## Run Color Display Demos
 ![TouchMissileCommand](images/TouchMissileCommand.png) ![TouchCalculator](images/TouchCalculator.png) ![TouchPaint](images/TouchPaint.png)
- To see a list of demos 
+ 
+To see a list of demos 
 [browse](https://github.com/sgjava/javauio2/tree/main/demo2/src/main/java/com/codeferm/periphery/display/demo)
 code. Just pass in --help to get list of command line arguments. Make sure demo2-1.0.0-SNAPSHOT-jar-with-dependencies.jar is in the current directory.
 
