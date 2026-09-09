@@ -23,6 +23,7 @@ More on the way.
 Hardware acceleration is implemented directly at the display driver level where supported (such as GAC features on the SSD1331). For displays that do not natively support hardware acceleration (such as the ST7789), transparent software fallbacks are provided, ensuring consistent API usage and drawing capabilities across all hardware modules.
 
 ## Run Color Display Demos
+![TouchMissileCommand](images/TouchMissileCommand.png) ![TouchCalculator](images/TouchCalculator.png) ![TouchPaint](images/TouchPaint.png)
  To see a list of demos 
 [browse](https://github.com/sgjava/javauio2/tree/main/demo2/src/main/java/com/codeferm/periphery/display/demo)
 code. Just pass in --help to get list of command line arguments. Make sure demo2-1.0.0-SNAPSHOT-jar-with-dependencies.jar is in the current directory.
