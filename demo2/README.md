@@ -3,7 +3,7 @@
 Java UIO Demo provides CLI programs, so you do not have to compile code with hard coded pins, ports, etc.
 
 ## Run Periphery demos
- To see a list of demos 
+To see a list of demos 
 [browse](https://github.com/sgjava/javauio2/tree/main/demo2/src/main/java/com/codeferm/periphery/demo)
 code. Just pass in --help to get list of command line arguments. Make sure demo2-1.0.0-SNAPSHOT-jar-with-dependencies.jar is in the current directory.
 
@@ -11,16 +11,20 @@ code. Just pass in --help to get list of command line arguments. Make sure demo2
 
 ## Color Display Demos (Generic Abstract Architecture)
 
-Color display demos now work generically across supported display types using an **abstract color display class (`AbstractColorDisplay`)** architecture. Core application logic and demos are entirely decoupled from specific hardware implementations, utilizing zero-allocation framebuffers and high-performance FFM memory segments.
+Color display demos now work generically across supported display types using an **abstract color display class (`AbstractColorDisplay`)** architecture. Core application logic and demos are entirely decoupled from specific hardware implementations, utilizing zero-allocation framebuffers, high-performance FFM memory segments, configurable **display rotation** (0, 90, 180, 270), and flexible **hardware/software backlight control with polarity inversion**.
 
 ### Supported Color Display Modules
 * **Swift-LCD (ST7789):** 1.3"/2.0" IPS TFT LCD screens over a standard 4-wire SPI bus utilizing the ST7789 driver IC.
+* **ILI9341 TFT LCD:** 2.2"/2.4"/2.8" TFT LCD screens driven by the ILI9341 controller, supporting advanced PWM backlight options (HW or SW modes) with active-low polarity inversion.
 * **SSD1331 OLED:** High-performance full-color OLED displays utilizing RGB565 color mapping and hardware-accelerated buffers.
 
 More on the way.
 
+### Supported Touch Modules
+* **XPT2046 Touch Controller:** Resistive touch screen controller utilizing SPI communication, configurable interrupt lines (`--touch-irq-line`), and SPI device paths (`--touch-device`) for interactive touch-based color display demos.
+
 ### Graphic Accelerator Commands (GAC) & Software Fallbacks
-Hardware acceleration is implemented directly at the display driver level where supported (such as GAC features on the SSD1331). For displays that do not natively support hardware acceleration (such as the ST7789), transparent software fallbacks are provided, ensuring consistent API usage and drawing capabilities across all hardware modules.
+Hardware acceleration is implemented directly at the display driver level where supported (such as GAC features on the SSD1331). For displays that do not natively support hardware acceleration (such as the ST7789 and ILI9341), transparent software fallbacks are provided, ensuring consistent API usage and drawing capabilities across all hardware modules.
 
 ## Run Color Display Demos
 ![TouchMissileCommand](images/TouchMissileCommand.png) ![TouchCalculator](images/TouchCalculator.png) ![TouchPaint](images/TouchPaint.png)
