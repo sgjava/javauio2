@@ -27,7 +27,14 @@ More on the way.
 Hardware acceleration is implemented directly at the display driver level where supported (such as GAC features on the SSD1331). For displays that do not natively support hardware acceleration (such as the ST7789 and ILI9341), transparent software fallbacks are provided, ensuring consistent API usage and drawing capabilities across all hardware modules.
 
 ## Run Color Display Demos
+
+Touch screen demos like Missile Command, calculator and paint.
+
 ![TouchMissileCommand](images/TouchMissileCommand.png) ![TouchCalculator](images/TouchCalculator.png) ![TouchPaint](images/TouchPaint.png)
+
+Non-touch demos as well.
+
+![SpriteDemo](images/SpriteDemo.png) ![Raytrace](images/Raytrace.png) ![DefenderScroller](images/DefenderScroller.png)
  
 To see a list of demos 
 [browse](https://github.com/sgjava/javauio2/tree/main/demo2/src/main/java/com/codeferm/periphery/display/demo)
