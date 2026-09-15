@@ -5,7 +5,10 @@ package com.codeferm.periphery.display.demo;
 
 import com.codeferm.periphery.device.AbstractColorDisplay;
 import com.codeferm.periphery.device.AbstractTouch;
+import com.codeferm.periphery.device.PassiveSpeaker;
+import com.codeferm.periphery.device.PwmDeviceFactory;
 import com.codeferm.periphery.device.Xpt2046;
+import com.codeferm.periphery.sound.SoundManager;
 import java.awt.Color;
 import java.awt.Font;
 import java.awt.Graphics2D;
@@ -17,17 +20,20 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Random;
+import java.util.concurrent.Callable;
 import lombok.extern.slf4j.Slf4j;
 import org.periphery.Periphery;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
+import picocli.CommandLine.Option;
 
 /**
- * Atari Missile Command style game demo with classic arcade colors.
+ * Atari Missile Command style game demo with classic arcade colors and optional sound effects.
  *
  * <p>
  * This version adds the main arcade-game flow: six cities, three firing bases, a moving bomber, normal missiles, smart bombs,
- * splitting MIRVs, expanding interceptor explosions, wave bonuses, and progressive difficulty.
+ * splitting MIRVs, expanding interceptor explosions, wave bonuses, progressive difficulty, and optional passive speaker sound
+ * effects.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -35,9 +41,9 @@ import picocli.CommandLine.Command;
  * @since 1.0.0
  */
 @Command(name = "MissileCommandTouch", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT", description
-        = "Interactive touch Missile Command game demo")
+        = "Interactive touch Missile Command game demo with optional sound")
 @Slf4j
-public class TouchMissileCommand extends Base {
+public class TouchMissileCommand extends Base implements Callable<Integer> {
 
     private static final int BYTES_PER_PIXEL = 2;
     private static final int INITIAL_AMMO = 10;
@@ -55,6 +61,18 @@ public class TouchMissileCommand extends Base {
     private static final int SMART_BOMB_SCORE = 150;
     private static final int MIRV_SCORE = 200;
     private static final int BOMBER_SCORE = 250;
+
+    @Option(names = {"-es", "--enable-sound"}, description = "Enable sound effects.", defaultValue = "false")
+    private boolean enableSound;
+
+    @Option(names = {"-sm", "--sound-mode"}, description = "Sound PWM Mode: HW or SW.", defaultValue = "SW")
+    private String soundMode;
+
+    @Option(names = {"-sd", "--sound-device"}, description = "Sound PWM chip index or GPIO chip path.", defaultValue = "/dev/gpiochip0")
+    private String soundDevice;
+
+    @Option(names = {"-sc", "--sound-channel"}, description = "Sound PWM channel or GPIO line index.", defaultValue = "80")
+    private int soundChannel;
 
     private byte[] frameBuffer;
     private final Random random = new Random();
@@ -80,6 +98,7 @@ public class TouchMissileCommand extends Base {
     private double targetX = -1;
     private double targetY = -1;
     private boolean targetVisible;
+    private SoundManager soundManager;
 
     /**
      * Incoming enemy projectile.
@@ -313,6 +332,9 @@ public class TouchMissileCommand extends Base {
         waveMissilesSpawned = 0;
         waveMissilesDestroyed = 0;
         waveMissilesToSpawn = Math.min(18 + level * 4, 70);
+        if (soundManager != null) {
+            soundManager.playGameStart();
+        }
     }
 
     /**
@@ -372,6 +394,9 @@ public class TouchMissileCommand extends Base {
         final var target = randomGroundTarget();
         if (target == null) {
             gameOver = true;
+            if (soundManager != null) {
+                soundManager.playGameOver();
+            }
             return;
         }
         final var startX = 8.0 + random.nextDouble() * Math.max(1.0, width - 16.0);
@@ -443,6 +468,9 @@ public class TouchMissileCommand extends Base {
         this.targetX = targetX;
         this.targetY = clampedTargetY;
         this.targetVisible = true;
+        if (soundManager != null) {
+            soundManager.playFire();
+        }
     }
 
     /**
@@ -526,6 +554,9 @@ public class TouchMissileCommand extends Base {
             if (!missile.active) {
                 explosions.add(new Explosion(missile.targetX, missile.targetY, false));
                 destroyTarget(missile.targetX, missile.targetY);
+                if (soundManager != null) {
+                    soundManager.playExplosion();
+                }
                 iterator.remove();
             }
         }
@@ -574,6 +605,9 @@ public class TouchMissileCommand extends Base {
             interceptor.update(dt);
             if (!interceptor.active) {
                 explosions.add(new Explosion(interceptor.x, interceptor.y, true));
+                if (soundManager != null) {
+                    soundManager.playExplosion();
+                }
                 iterator.remove();
             }
         }
@@ -788,6 +822,9 @@ public class TouchMissileCommand extends Base {
         updateWave(dt);
         if (livingCities() == 0) {
             gameOver = true;
+            if (soundManager != null) {
+                soundManager.playGameOver();
+            }
         }
     }
 
@@ -977,19 +1014,17 @@ public class TouchMissileCommand extends Base {
     }
 
     /**
-     * Runs the touch game loop.
+     * Core game loop execution helper.
      *
      * @param display Color display.
      * @param touch Touch device.
+     * @param width Screen width.
+     * @param height Screen height.
      * @throws Exception On failure.
      */
-    private void runDemo(final AbstractColorDisplay display, final AbstractTouch touch) throws Exception {
-        log.info("Missile Command demo started on device {} line {}...", getGpioDevice(), getTouchIrqLine());
-        final var width = getWidth();
-        final var height = getHeight();
+    private void runGameLoop(final AbstractColorDisplay display, final AbstractTouch touch, final int width, final int height)
+            throws Exception {
         initGame(width, height);
-
-        // Render initial frame immediately so snapshot has a populated buffer from the start
         renderFrame(display);
 
         final var xpt = (Xpt2046) touch;
@@ -1019,6 +1054,34 @@ public class TouchMissileCommand extends Base {
                 update(dt, width, height);
             }
             renderFrame(display);
+        }
+    }
+
+    /**
+     * Runs the touch game loop with optional sound management.
+     *
+     * @param display Color display.
+     * @param touch Touch device.
+     * @throws Exception On failure.
+     */
+    private void runDemo(final AbstractColorDisplay display, final AbstractTouch touch) throws Exception {
+        log.info("Missile Command demo started on device {} line {} (sound enabled: {})...", getGpioDevice(), getTouchIrqLine(),
+                enableSound);
+        final var width = getWidth();
+        final var height = getHeight();
+
+        if (enableSound) {
+            try (
+                    final var speaker = new PassiveSpeaker(PwmDeviceFactory.create(soundMode, soundDevice, soundChannel)); final var manager
+                    = new SoundManager(speaker)) {
+                this.soundManager = manager;
+                runGameLoop(display, touch, width, height);
+            } finally {
+                this.soundManager = null;
+            }
+        } else {
+            this.soundManager = null;
+            runGameLoop(display, touch, width, height);
         }
     }
 

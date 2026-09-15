@@ -52,9 +52,11 @@ Make the following changes to /boot/armbianEnv.txt as needed.
 * `param_spidev_spi_bus=1` to change to /dev/spidev1.0 for Duo
 * `extraargs=spidev.bufsiz=65536` increase buffer size from 4K. Verify with `cat /sys/module/spidev/parameters/bufsiz`
 
-## SSD1331 OLED support
-SSD1331 driver provides fast Java 2D buffered updates. Easily do over 120 FPS on older/slower
-SBC like NanoPi Duo with very little CPU usage. Look at the demo project for examples.
+## Color display support
+* **Swift-LCD (ST7789):** 1.3"/2.0" IPS TFT LCD screens over a standard 4-wire SPI bus utilizing the ST7789 driver IC.
+* **ILI9341 TFT LCD:** 2.2"/2.4"/2.8" TFT LCD screens driven by the ILI9341 controller, supporting advanced PWM backlight options (HW or SW modes) with active-low polarity inversion.
+* **SSD1331 OLED:** High-performance full-color OLED displays utilizing RGB565 color mapping and hardware-accelerated buffers.
+
 
 ## High performance GPIO using MMIO
 I have created a generic way to achieve fast GPIO for times when performance (bit
