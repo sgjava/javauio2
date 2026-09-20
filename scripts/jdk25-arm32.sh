@@ -75,7 +75,7 @@ sudo apt-get install -y --no-install-recommends \
     libfreetype6-dev libfreetype-dev:armhf \
     libasound2-dev:armhf libcups2-dev:armhf \
     libx11-dev:armhf libxext-dev:armhf libxrender-dev:armhf \
-    libxrandr-dev:armhf libxtst-dev:armhf libxt-dev:armhf
+    libxrandr-dev:armhf libxtst-dev:armhf libxt-dev:armhf zip
 
 # -----------------------------------------------------------------------------
 # STEP 2: Boot JDK Setup
