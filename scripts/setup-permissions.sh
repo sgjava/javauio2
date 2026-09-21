@@ -52,7 +52,7 @@ EOF
 sudo chmod +x /usr/local/bin/uio-permissions.sh
 
 # --------------------------------------------------
-# 3. Probe and Install PWM Backlight Startup Service (Conditional)
+# 3. Probe PWM Availability
 # --------------------------------------------------
 
 has_pwm=false
@@ -60,22 +60,8 @@ if [ -d "/sys/class/pwm/pwmchip0" ]; then
     has_pwm=true
 fi
 
-if [ "$has_pwm" = true ]; then
-    echo "PWM chip detected. Installing pwm-backlight-off.service..."
-
-    if [ -f "pwm-backlight-off.service" ]; then
-        sudo cp pwm-backlight-off.service /etc/systemd/system/
-        sudo chmod 644 /etc/systemd/system/pwm-backlight-off.service
-    else
-        echo "Error: pwm-backlight-off.service not found in current directory!" >&2
-        exit 1
-    fi
-else
-    echo "Warning: PWM chip not found (/sys/class/pwm/pwmchip0 missing). Skipping PWM backlight service configuration."
-fi
-
 # --------------------------------------------------
-# 4. Install udev Rules
+# 4. Install udev Rules & Optional Service
 # --------------------------------------------------
 
 echo "Installing udev rules..."
@@ -88,16 +74,25 @@ else
     exit 1
 fi
 
-if [ -f "99-pwm0.rules" ]; then
-    if [ "$has_pwm" = true ]; then
-        echo "Installing 99-pwm0.rules..."
+if [ "$has_pwm" = true ]; then
+    echo "PWM detected. Setting up backlight service and rules..."
+
+    if [ -f "pwm-backlight-off.service" ]; then
+        sudo cp pwm-backlight-off.service /etc/systemd/system/
+        sudo chmod 644 /etc/systemd/system/pwm-backlight-off.service
+    else
+        echo "Error: pwm-backlight-off.service not found!" >&2
+        exit 1
+    fi
+
+    if [ -f "99-pwm0.rules" ]; then
         sudo cp 99-pwm0.rules /etc/udev/rules.d/
     else
-        echo "Skipping 99-pwm0.rules (PWM not active)."
+        echo "Error: 99-pwm0.rules not found!" >&2
+        exit 1
     fi
 else
-    echo "Error: 99-pwm0.rules not found!" >&2
-    exit 1
+    echo "PWM not detected. Skipping backlight service installation."
 fi
 
 # --------------------------------------------------
@@ -111,7 +106,7 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger
 
 # --------------------------------------------------
-# 6. Enable Services
+# 6. Enable / Start Services Conditionally
 # --------------------------------------------------
 
 if [ "$has_pwm" = true ]; then
@@ -127,15 +122,9 @@ echo "Applying UIO permissions..."
 
 sudo /usr/local/bin/uio-permissions.sh
 
-# --------------------------------------------------
-# 8. Start PWM Backlight Service (Conditional)
-# --------------------------------------------------
-
 if [ "$has_pwm" = true ]; then
     echo "Turning backlight off..."
     sudo systemctl restart pwm-backlight-off.service
-else
-    echo "Skipping PWM backlight startup (PWM disabled)."
 fi
 
 echo
@@ -151,11 +140,4 @@ echo "  LED sysfs permissions"
 if [ "$has_pwm" = true ]; then
     echo "  PWM udev permissions"
     echo "  PWM backlight OFF at boot"
-fi
-echo
-if [ "$has_pwm" = true ]; then
-    echo "Current PWM permissions:"
-    ls -l /sys/class/pwm/pwmchip0/pwm0/{period,duty_cycle,enable} 2>/dev/null || true
-else
-    echo "PWM is currently not enabled or missing."
 fi
