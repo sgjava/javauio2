@@ -29,21 +29,26 @@ sudo usermod -a -G dialout "$USER"
 
 echo "Creating /usr/local/bin/uio-permissions.sh..."
 
-sudo tee /usr/local/bin/uio-permissions.sh > /dev/null <<'EOF'
+sudo tee /usr/local/bin/uio-permissions.sh > /dev/null << 'EOF'
 #!/bin/sh
 
-# Set permissions for device nodes safely with glob checks
-for dev in /dev/mem /dev/gpiochip* /dev/i2c* /dev/spidev*; do
-    if [ -e "$dev" ]; then
-        chown root:uio "$dev"
-        chmod ug+rw "$dev"
-    fi
+echo "Applying permissions to device nodes..."
+
+for pattern in /dev/mem /dev/gpiochip* /dev/i2c* /dev/spidev*; do
+    for dev in $pattern; do
+        if [ -e "$dev" ]; then
+            chown root:uio "$dev"
+            chmod ug+rw "$dev"
+            echo "Updated permissions for: $dev"
+        fi
+    done
 done
 
 # Set permissions for LED sysfs paths
 if [ -d /sys/devices/platform/leds/leds ]; then
     chown -R root:uio /sys/devices/platform/leds/leds
     chmod -R ug+rw /sys/devices/platform/leds/leds
+    echo "Updated permissions for LED sysfs"
 fi
 
 exit 0
