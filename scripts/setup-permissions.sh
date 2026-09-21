@@ -57,7 +57,27 @@ EOF
 sudo chmod +x /usr/local/bin/uio-permissions.sh
 
 # --------------------------------------------------
-# 3. Probe PWM Availability
+# 3. Create and Enable UIO Permissions Service
+# --------------------------------------------------
+
+echo "Creating uio-permissions.service..."
+
+sudo tee /etc/systemd/system/uio-permissions.service > /dev/null << 'EOT'
+[Unit]
+Description=Java UIO 2 Permissions Service
+After=multi-user.target udev.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/uio-permissions.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOT
+
+# --------------------------------------------------
+# 4. Probe PWM Availability
 # --------------------------------------------------
 
 has_pwm=false
@@ -66,7 +86,7 @@ if [ -d "/sys/class/pwm/pwmchip0" ]; then
 fi
 
 # --------------------------------------------------
-# 4. Install udev Rules & Optional Service
+# 5. Install udev Rules & Optional Service
 # --------------------------------------------------
 
 echo "Installing udev rules..."
@@ -101,7 +121,7 @@ else
 fi
 
 # --------------------------------------------------
-# 5. Reload systemd and udev
+# 6. Reload systemd and udev
 # --------------------------------------------------
 
 echo "Reloading systemd and udev..."
@@ -111,8 +131,12 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger
 
 # --------------------------------------------------
-# 6. Enable / Start Services Conditionally
+# 7. Enable / Start Services
 # --------------------------------------------------
+
+echo "Enabling and starting uio-permissions.service..."
+sudo systemctl enable uio-permissions.service
+sudo systemctl restart uio-permissions.service
 
 if [ "$has_pwm" = true ]; then
     echo "Enabling PWM backlight startup service..."
@@ -120,7 +144,7 @@ if [ "$has_pwm" = true ]; then
 fi
 
 # --------------------------------------------------
-# 7. Apply UIO Permissions Now
+# 8. Apply UIO Permissions Now
 # --------------------------------------------------
 
 echo "Applying UIO permissions..."
@@ -136,7 +160,7 @@ echo
 echo "--- Setup Complete ---"
 echo
 echo "Configured:"
-echo "  UIO group permissions"
+echo "  UIO group permissions & systemd service"
 echo "  GPIO permissions"
 echo "  I2C permissions"
 echo "  SPI permissions"
