@@ -6,6 +6,7 @@ package com.codeferm.periphery.display.demo;
 import com.codeferm.periphery.NativeLoader;
 import com.codeferm.periphery.device.AbstractColorDisplay;
 import com.codeferm.periphery.device.AbstractTouch;
+import com.codeferm.periphery.device.Gc9a01;
 import com.codeferm.periphery.device.Ili9341;
 import com.codeferm.periphery.device.PwmBacklight;
 import com.codeferm.periphery.device.PwmDeviceFactory;
@@ -35,7 +36,7 @@ import picocli.CommandLine.Option;
  * </p>
  *
  * @author Steven P. Goldsmith
- * @version 1.1.0
+ * @version 1.1.1
  * @since 1.0.0
  */
 @Data
@@ -62,7 +63,8 @@ public abstract class Base implements Callable<Integer> {
         Rectangle getBounds();
     }
 
-    @Option(names = {"--display-type"}, description = "Display type (ST7789, ILI9341, SSD1331), ${DEFAULT-VALUE} by default.")
+    @Option(names = {"--display-type"}, description
+            = "Display type (ST7789, ILI9341, SSD1331, GC9A01), ${DEFAULT-VALUE} by default.")
     private String displayType = "ST7789";
 
     @Option(names = {"-d", "--device"}, description = "SPI device for display, ${DEFAULT-VALUE} by default.")
@@ -80,11 +82,15 @@ public abstract class Base implements Callable<Integer> {
     @Option(names = {"-dc", "--dc-line"}, description = "DC line, ${DEFAULT-VALUE} by default.")
     private int dc = 71;
 
-    @Option(names = {"-res", "--res-line"}, description = "RES line (SSD1331/ILI9341), ${DEFAULT-VALUE} by default.")
+    @Option(names = {"-res", "--res-line"}, description = "RES line (SSD1331/ILI9341/GC9A01), ${DEFAULT-VALUE} by default.")
     private int res = 25;
 
-    @Option(names = {"-led", "--led-line"}, description = "LED backlight line (ILI9341), ${DEFAULT-VALUE} by default.")
-    private int led = 24;
+    @Option(names = {"--led-backlight"}, description = "Enable LED backlight GPIO, ${DEFAULT-VALUE} by default.")
+    private boolean ledEnabled = false;
+
+    @Option(names = {"-led", "--led-line"}, description
+            = "LED backlight line (ST7789, ILI9341, GC9A01), ${DEFAULT-VALUE} by default.")
+    private int led = -1;
 
     // --- PWM Backlight Configuration Options ---
     @Option(names = {"--pwm-backlight"}, description = "Use PWM for backlight instead of GPIO, ${DEFAULT-VALUE} by default.")
@@ -279,6 +285,7 @@ public abstract class Base implements Callable<Integer> {
     @Override
     public Integer call() throws Exception {
         log.info("Initializing display type {} on {} (speed: {}Hz, rotation: {}°)", displayType, device, speed, rotation);
+        final var ledPin = ledEnabled ? led : -1;
         final var targetDisplay = switch (displayType != null ? displayType.toUpperCase() : "") {
             case "ST7789" -> {
                 if (pwmBacklightEnabled) {
@@ -288,7 +295,7 @@ public abstract class Base implements Callable<Integer> {
                     backlight.enable();
                     yield new St7789(device, mode, speed, gpioDevice, dc, res, backlight, bufferSize);
                 } else {
-                    yield new St7789(device, mode, speed, gpioDevice, dc, res, led, bufferSize);
+                    yield new St7789(device, mode, speed, gpioDevice, dc, res, ledPin, bufferSize);
                 }
             }
             case "ILI9341" -> {
@@ -299,7 +306,18 @@ public abstract class Base implements Callable<Integer> {
                     backlight.enable();
                     yield new Ili9341(device, mode, speed, gpioDevice, dc, res, backlight, bufferSize);
                 } else {
-                    yield new Ili9341(device, mode, speed, gpioDevice, dc, res, led, bufferSize);
+                    yield new Ili9341(device, mode, speed, gpioDevice, dc, res, ledPin, bufferSize);
+                }
+            }
+            case "GC9A01" -> {
+                if (pwmBacklightEnabled) {
+                    final var pwmDeviceInstance = PwmDeviceFactory.create(pwmMode, pwmDevice, pwmChannel);
+                    final var backlight = new PwmBacklight(pwmDeviceInstance, pwmInverted);
+                    backlight.setBrightness(pwmPeriod, 1.0);
+                    backlight.enable();
+                    yield new Gc9a01(device, mode, speed, gpioDevice, dc, res, backlight, bufferSize);
+                } else {
+                    yield new Gc9a01(device, mode, speed, gpioDevice, dc, res, ledPin, bufferSize);
                 }
             }
             case "SSD1331" ->
