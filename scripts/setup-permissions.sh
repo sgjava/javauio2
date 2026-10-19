@@ -32,7 +32,16 @@ echo "Creating /usr/local/bin/uio-permissions.sh..."
 sudo tee /usr/local/bin/uio-permissions.sh > /dev/null << 'EOF'
 #!/bin/sh
 
-echo "Applying permissions to device nodes..."
+echo "Applying permissions and binding SPI devices..."
+
+# Force-bind spidev driver to SPI1 devices if present in sysfs but unbound
+for n in spi1.0 spi1.1; do
+    if [ -d "/sys/bus/spi/devices/$n" ] && [ ! -e "/dev/spidev$n" ]; then
+        echo "Binding $n to spidev driver..."
+        echo spidev > "/sys/bus/spi/devices/$n/driver_override" 2>/dev/null || true
+        echo "$n" > /sys/bus/spi/drivers/spidev/bind 2>/dev/null || true
+    fi
+done
 
 for pattern in /dev/mem /dev/gpiochip* /dev/i2c* /dev/spidev*; do
     for dev in $pattern; do
@@ -163,7 +172,7 @@ echo "Configured:"
 echo "  UIO group permissions & systemd service"
 echo "  GPIO permissions"
 echo "  I2C permissions"
-echo "  SPI permissions"
+echo "  SPI permissions (with automated driver binding)"
 echo "  MMIO permissions"
 echo "  LED sysfs permissions"
 if [ "$has_pwm" = true ]; then

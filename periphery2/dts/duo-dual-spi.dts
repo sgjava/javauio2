@@ -1,0 +1,38 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "allwinner,sun8i-h3";
+
+    fragment@0 {
+        target = <&spi1>;
+
+        __overlay__ {
+            #address-cells = <1>;
+            #size-cells = <0>;
+
+            /*
+             * SPI1 CS0: PA13
+             * SPI1 CS1: PA12 (GPIO)
+             */
+            cs-gpios = <&pio 0 13 1>,
+                       <&pio 0 12 1>;
+
+            status = "okay";
+
+            spidev@0 {
+                compatible = "spidev";
+                reg = <0>;
+                spi-max-frequency = <32000000>;
+                status = "okay";
+            };
+
+            spidev@1 {
+                compatible = "spidev";
+                reg = <1>;
+                spi-max-frequency = <32000000>;
+                status = "okay";
+            };
+        };
+    };
+};
