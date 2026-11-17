@@ -14,6 +14,9 @@
 
 set -e
 
+# Ensure user-installed tools like jextract are in PATH for non-interactive shells (e.g. NetBeans)
+export PATH="$HOME/.jextract/bin:$HOME/.sdkman/candidates/maven/current/bin:$PATH"
+
 ARCH=$1
 if [ -z "$ARCH" ]; then ARCH="x86_64"; fi
 

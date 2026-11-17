@@ -3,6 +3,8 @@
  */
 package com.codeferm.periphery.device;
 
+import com.codeferm.periphery.event.HardwareListener;
+import com.codeferm.periphery.event.HardwareRegistry;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -10,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
  * <p>
  * Provides high-level control over LCD backlight brightness using a {@link PwmDevice} transport. Supports enabling, disabling, and
  * granular brightness control via pulse width or percentage-based duty cycles, with optional inversion for active-low hardware.
+ * Unregisters the underlying transport from the global registry to enforce hierarchical parent-child lifecycle ownership.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -50,6 +53,11 @@ public final class PwmBacklight implements AutoCloseable {
      * @param inverted True if the hardware circuit is active-low (inverted).
      */
     public PwmBacklight(final PwmDevice pwm, final boolean inverted) {
+        // Unregister from global HardwareRegistry if it's a tracked hardware listener so parent owns lifecycle exclusively
+        if (pwm instanceof HardwareListener listener) {
+            HardwareRegistry.getInstance().unregister(listener);
+        }
+
         log.atDebug().log("Initializing PwmBacklight with transport: {}, inverted: {}",
                 pwm.getClass().getSimpleName(), inverted);
         this.pwm = pwm;

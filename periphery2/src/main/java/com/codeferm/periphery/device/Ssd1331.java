@@ -266,7 +266,8 @@ public class Ssd1331 extends AbstractColorDisplay {
     }
 
     /**
-     * Sends data bytes (pixels) directly from a {@link MemorySegment} in optimized chunks (DC pin HIGH).
+     * Sends data bytes (pixels) directly from a {@link MemorySegment} in optimized chunks (DC pin HIGH). Concludes with an SSD1331
+     * NO_OP state termination command to prevent SPI bus hanging.
      *
      * @param segment Native segment containing pixel data.
      */
@@ -284,6 +285,8 @@ public class Ssd1331 extends AbstractColorDisplay {
                 }
                 offset += length;
             }
+            // Conclude transfer with NO_OP to leave SSD1331 in a stable state
+            writeCommand(new byte[]{NO_OP});
         }
     }
 

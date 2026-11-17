@@ -15,12 +15,12 @@ import org.periphery.spi_handle;
 /**
  * Abstract base class for color display modules using Java Foreign Function & Memory (FFM) API.
  * <p>
- * Provides shared capabilities for color displays, including dimensions, buffer chunking strategies, high-performance RGB888 to
- * RGB565 zero-allocation conversion logic, hardware-agnostic graphics primitives, and display rotation management.
+ * Provides shared capabilities for color displays, including dimensions, buffer chunking strategies, high-performance color
+ * zero-allocation conversion logic, hardware-agnostic graphics primitives, and display rotation management.
  * </p>
  *
  * @author Steven P. Goldsmith
- * @version 1.1.0
+ * @version 1.0.0
  * @since 1.0.0
  */
 @Slf4j
@@ -65,6 +65,11 @@ public abstract class AbstractColorDisplay extends AbstractDevice {
     protected final int bufferSize;
 
     /**
+     * Bytes per pixel (2 for RGB565, 3 for RGB666).
+     */
+    protected final int bytesPerPixel;
+
+    /**
      * Native handle for the Data/Command GPIO pin.
      */
     @Getter
@@ -80,51 +85,70 @@ public abstract class AbstractColorDisplay extends AbstractDevice {
      * Reusable native segment for full-frame image data.
      */
     @Getter
-    protected final MemorySegment imageSegment;
+    protected MemorySegment imageSegment;
 
     /**
-     * Initializes the abstract color display with dimensions and default chunk buffer size (65536 bytes).
+     * Initializes the abstract color display with dimensions and default chunk buffer size (65536 bytes, 2 bytes/pixel).
      *
      * @param width Display width in pixels.
      * @param height Display height in pixels.
      */
     protected AbstractColorDisplay(final int width, final int height) {
-        this(width, height, 65536);
+        this(width, height, 65536, 2);
     }
 
     /**
-     * Initializes the abstract color display with dimensions and a custom buffer size.
+     * Initializes the abstract color display with dimensions and a custom buffer size (2 bytes/pixel).
      *
      * @param width Display width in pixels.
      * @param height Display height in pixels.
      * @param bufferSize Transfer buffer chunk size in bytes.
      */
     protected AbstractColorDisplay(final int width, final int height, final int bufferSize) {
+        this(width, height, bufferSize, 2);
+    }
+
+    /**
+     * Initializes the abstract color display with dimensions, custom buffer size, and bytes per pixel.
+     *
+     * @param width Display width in pixels.
+     * @param height Display height in pixels.
+     * @param bufferSize Transfer buffer chunk size in bytes.
+     * @param bytesPerPixel Bytes per pixel (2 or 3).
+     */
+    protected AbstractColorDisplay(final int width, final int height, final int bufferSize, final int bytesPerPixel) {
         super(spi_handle.layout());
         this.baseWidth = width;
         this.baseHeight = height;
         this.width = width;
         this.height = height;
         this.bufferSize = bufferSize;
+        this.bytesPerPixel = bytesPerPixel;
         this.dcHandle = getArena().allocate(gpio_handle.layout());
         this.commandSegment = getArena().allocate(64);
-        this.imageSegment = getArena().allocate((long) width * height * 2);
+        this.imageSegment = getArena().allocate((long) width * height * bytesPerPixel);
     }
 
     /**
-     * Sets the display rotation orientation, adjusting effective width and height accordingly.
+     * Sets the display rotation orientation, adjusting effective width, height, and resizing the frame buffer segment accordingly.
      *
      * @param rotation Rotation angle (0, 90, 180, 270).
      */
     public void setRotation(final int rotation) {
-        this.rotation = rotation % 360;
-        if (this.rotation == 90 || this.rotation == 270) {
+        final var normalized = Math.floorMod(rotation, 360);
+        if (normalized != 0 && normalized != 90 && normalized != 180 && normalized != 270) {
+            throw new IllegalArgumentException("Rotation must be 0, 90, 180, or 270 degrees: " + rotation);
+        }
+        this.rotation = normalized;
+        if (normalized == 90 || normalized == 270) {
             this.width = baseHeight;
             this.height = baseWidth;
         } else {
             this.width = baseWidth;
             this.height = baseHeight;
         }
+        // Reallocate native image segment to match new rotated dimensions
+        this.imageSegment = getArena().allocate((long) this.width * this.height * bytesPerPixel);
     }
 
     /**
@@ -147,14 +171,14 @@ public abstract class AbstractColorDisplay extends AbstractDevice {
     public abstract void clear();
 
     /**
-     * Maps a {@link BufferedImage} to RGB565 and renders it to the display.
+     * Maps a {@link BufferedImage} and renders it to the display.
      *
      * @param image BufferedImage to render.
      */
     public abstract void drawImage(final BufferedImage image);
 
     /**
-     * Maps a sub-region of a {@link BufferedImage} to RGB565 and renders it to a specific window on the display.
+     * Maps a sub-region of a {@link BufferedImage} and renders it to a specific window on the display.
      *
      * @param image Source BufferedImage.
      * @param x Destination window X start coordinate.
@@ -171,12 +195,24 @@ public abstract class AbstractColorDisplay extends AbstractDevice {
         for (var sy = 0; sy < height; sy++) {
             for (var sx = 0; sx < width; sx++) {
                 final var p = pixels[sy * imgWidth + sx];
-                final var packed = (short) ((((p >> 19) & 0x1F) << 11) | (((p >> 10) & 0x3F) << 5) | ((p >> 3) & 0x1F));
-                imageSegment.set(ValueLayout.JAVA_SHORT_UNALIGNED, destOffset, Short.reverseBytes(packed));
-                destOffset += 2L;
+                if (bytesPerPixel == 3) {
+                    imageSegment.set(ValueLayout.JAVA_BYTE, destOffset, (byte) ((p >> 16) & 0xFF));
+                    imageSegment.set(ValueLayout.JAVA_BYTE, destOffset + 1L, (byte) ((p >> 8) & 0xFF));
+                    imageSegment.set(ValueLayout.JAVA_BYTE, destOffset + 2L, (byte) (p & 0xFF));
+                    destOffset += 3L;
+                } else {
+                    final var r = (p >> 16) & 0xFF;
+                    final var g = (p >> 8) & 0xFF;
+                    final var b = p & 0xFF;
+                    final var rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+
+                    imageSegment.set(ValueLayout.JAVA_BYTE, destOffset, (byte) (rgb565 >> 8));
+                    imageSegment.set(ValueLayout.JAVA_BYTE, destOffset + 1L, (byte) rgb565);
+                    destOffset += 2L;
+                }
             }
         }
-        writeData(imageSegment.asSlice(0, (long) width * height * 2L));
+        writeData(imageSegment.asSlice(0, (long) width * height * bytesPerPixel));
     }
 
     /**
@@ -273,7 +309,7 @@ public abstract class AbstractColorDisplay extends AbstractDevice {
 
     /**
      * Zero-allocation conversion method mapping an RGB888 {@link BufferedImage} directly into the pre-allocated
-     * {@link #imageSegment} in RGB565 format.
+     * {@link #imageSegment} in RGB565 Big-Endian format.
      *
      * @param image Source BufferedImage.
      */
@@ -281,8 +317,30 @@ public abstract class AbstractColorDisplay extends AbstractDevice {
         final var pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
         for (var i = 0; i < pixels.length; i++) {
             final var p = pixels[i];
-            final var packed = (short) ((((p >> 19) & 0x1F) << 11) | (((p >> 10) & 0x3F) << 5) | ((p >> 3) & 0x1F));
-            imageSegment.set(ValueLayout.JAVA_SHORT_UNALIGNED, i * 2L, Short.reverseBytes(packed));
+            final var r = (p >> 16) & 0xFF;
+            final var g = (p >> 8) & 0xFF;
+            final var b = p & 0xFF;
+            final var rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+            final var offset = i * 2L;
+            imageSegment.set(ValueLayout.JAVA_BYTE, offset, (byte) (rgb565 >> 8));
+            imageSegment.set(ValueLayout.JAVA_BYTE, offset + 1L, (byte) rgb565);
+        }
+    }
+
+    /**
+     * Zero-allocation conversion method mapping an RGB888 {@link BufferedImage} directly into the pre-allocated
+     * {@link #imageSegment} in RGB666 format.
+     *
+     * @param image Source BufferedImage.
+     */
+    protected final void packRgb888ToRgb666(final BufferedImage image) {
+        final var pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
+        for (var i = 0; i < pixels.length; i++) {
+            final var p = pixels[i];
+            final var offset = i * 3L;
+            imageSegment.set(ValueLayout.JAVA_BYTE, offset, (byte) ((p >> 16) & 0xFF));
+            imageSegment.set(ValueLayout.JAVA_BYTE, offset + 1L, (byte) ((p >> 8) & 0xFF));
+            imageSegment.set(ValueLayout.JAVA_BYTE, offset + 2L, (byte) (p & 0xFF));
         }
     }
 }

@@ -9,16 +9,17 @@ import com.codeferm.periphery.event.HardwareRegistry;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemoryLayout;
 import java.lang.foreign.MemorySegment;
+import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.periphery.Periphery;
 
 /**
- * Base class for all FFM-backed native hardware devices with automated shutdown tracking.
+ * Base class for all FFM-backed native hardware devices with automated shutdown tracking and idempotent lifecycle safety.
  * <p>
- * This class centralizes the boilerplate for native memory management, handle allocation, lifecycle control, and automated
- * safe-teardown on system interrupts (SIGINT).
+ * Centralizes native memory management, handle allocation, lifecycle control, and automated safe-teardown protected by an atomic
+ * idempotency guard to prevent double-free corruption.
  * </p>
  *
  * @author Steven P. Goldsmith
@@ -37,6 +38,11 @@ public abstract class AbstractDevice implements AutoCloseable, HardwareListener 
 
     @Getter(AccessLevel.PROTECTED)
     private final MemorySegment handle;
+
+    /**
+     * Atomic flag ensuring native hardware teardown executes exactly once, preventing double-free races.
+     */
+    private final AtomicBoolean closedFlag = new AtomicBoolean(false);
 
     /**
      * Initializes a shared arena, allocates the native handle segment, and registers with the hardware observer.
@@ -66,7 +72,7 @@ public abstract class AbstractDevice implements AutoCloseable, HardwareListener 
     }
 
     /**
-     * Listener callback invoked when the terminal traps a SIGINT (Ctrl+C). Delegates immediately to the standard close routing.
+     * Listener callback invoked when the terminal traps a SIGINT (Ctrl+C). Delegates immediately to standard close routine.
      */
     @Override
     public final void onSystemShutdown() {
@@ -75,10 +81,13 @@ public abstract class AbstractDevice implements AutoCloseable, HardwareListener 
     }
 
     /**
-     * Closes the native handle, unregisters from system events, and invalidates the arena.
+     * Closes the native handle atomically, unregisters from system events, and invalidates the arena exactly once.
      */
     @Override
     public final void close() {
+        if (!closedFlag.compareAndSet(false, true)) {
+            return;
+        }
         try {
             // Unregister first so we don't clear it twice if closed normally via try-with-resources
             HardwareRegistry.getInstance().unregister(this);
