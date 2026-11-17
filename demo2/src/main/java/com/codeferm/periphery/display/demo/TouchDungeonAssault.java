@@ -33,12 +33,12 @@ import picocli.CommandLine.Spec;
  * and waves.</p>
  *
  * @author Steven P. Goldsmith
- * @version 1.2.0-SNAPSHOT
+ * @version 1.0.0
  * @since 1.0.0
  */
 @Slf4j
 @Command(name = "TouchDungeonAssault", mixinStandardHelpOptions = true,
-        version = "1.2.0-SNAPSHOT",
+        version = "1.0.0-SNAPSHOT",
         description = "Touch-controlled raycasting shooter with graphical controls and optional sound")
 public class TouchDungeonAssault extends Base implements Callable<Integer> {
 

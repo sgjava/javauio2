@@ -20,7 +20,8 @@ import picocli.CommandLine.Option;
  * @version 1.0.0
  * @since 1.0.0
  */
-@Command(name = "pwm-backlight", description = "Test PWM backlight brightness ramp and inversion via device abstraction factory.")
+@Command(name = "pwm-backlight", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT", description
+        = "Test PWM backlight brightness ramp and inversion via device abstraction factory.")
 @Slf4j
 public final class PwmBacklightDemo extends Base {
 

@@ -19,11 +19,11 @@ import picocli.CommandLine.Option;
  * </p>
  *
  * @author Steven P. Goldsmith
- * @version 1.4.0
+ * @version 1.0.0
  * @since 1.0.0
  */
 @Slf4j
-@Command(name = "Perf", mixinStandardHelpOptions = true, version = "1.4.0-SNAPSHOT",
+@Command(name = "Perf", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "Display performance demo with real-world partial dirty writes")
 public class Perf extends Base {
 

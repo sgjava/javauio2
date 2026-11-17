@@ -16,11 +16,11 @@ import picocli.CommandLine;
 import picocli.CommandLine.Command;
 
 /**
- * High-performance, zero-allocation Defender-style scroller optimized for small color displays (like SSD1331) featuring smooth
- * cosine-interpolated rolling terrain and synchronized snapshot support.
+ * High-performance, zero-allocation Defender-style scroller optimized for color displays featuring smooth cosine-interpolated
+ * rolling terrain, sub-pixel scroll accumulation, and synchronized snapshot support.
  *
  * @author Steven P. Goldsmith
- * @version 1.9.0
+ * @version 1.0.0
  * @since 1.0.0
  */
 @Slf4j
@@ -54,12 +54,12 @@ public class DefenderScroller extends Base {
      */
     private int[] terrain;
     private int terrainWidth;
-    private int viewOffset = 0;
+    private double viewOffset = 0.0;
 
     /**
-     * Scroll direction: -1 for Left (Ship faces Left), 1 for Right (Ship faces Right).
+     * Scroll direction: -1.0 for Left (Ship faces Left), 1.0 for Right (Ship faces Right).
      */
-    private int velocity = -1;
+    private double scrollSpeed = -0.75;
 
     /**
      * Fixed horizontal anchor point for the ship.
@@ -177,7 +177,7 @@ public class DefenderScroller extends Base {
         if (screenX < 0 || screenX >= displayWidth) {
             return;
         }
-        var worldX = (viewOffset + screenX) % terrainWidth;
+        var worldX = ((int) viewOffset + screenX) % terrainWidth;
         if (worldX < 0) {
             worldX += terrainWidth;
         }
@@ -202,9 +202,9 @@ public class DefenderScroller extends Base {
      *
      * @param x Horizontal center.
      * @param y Vertical center.
-     * @param dir Direction (-1 for left, 1 for right).
+     * @param dir Direction (< 0 for left, > 0 for right).
      */
-    private final void drawShip(final int x, final int y, final int dir) {
+    private final void drawShip(final int x, final int y, final double dir) {
         final var r = 0;
         final var g = 63;
         final var b = 63; // Cyan ship
@@ -259,7 +259,7 @@ public class DefenderScroller extends Base {
      * @throws Exception If communication fails.
      */
     public final void runDemo(final AbstractColorDisplay display) throws Exception {
-        log.info("Starting Defender Scroller with Cosine-Interpolated Terrain...");
+        log.info("Starting Smooth Scrolling Defender Scroller...");
 
         displayWidth = display.getWidth();
         displayHeight = display.getHeight();
@@ -274,7 +274,7 @@ public class DefenderScroller extends Base {
         shipX = displayWidth / 2;
         initTerrain(displayWidth, displayHeight);
         shipY = displayHeight / 2.0;
-        viewOffset = 0;
+        viewOffset = 0.0;
 
         final var backSeg = MemorySegment.ofArray(backBuffer);
         final var bi = getImage();
@@ -282,8 +282,8 @@ public class DefenderScroller extends Base {
         while (isRunning() && !Thread.currentThread().isInterrupted()) {
             final var startTime = System.currentTimeMillis();
 
-            // 1. Update background viewport offset for smooth scrolling
-            viewOffset += velocity;
+            // 1. Sub-pixel scroll accumulator for silky-smooth motion
+            viewOffset += scrollSpeed;
             if (viewOffset < 0) {
                 viewOffset += terrainWidth;
             } else if (viewOffset >= terrainWidth) {
@@ -296,7 +296,7 @@ public class DefenderScroller extends Base {
             }
 
             // 3. Terrain following physics (Lerp)
-            var shipWorldX = (viewOffset + shipX) % terrainWidth;
+            var shipWorldX = ((int) viewOffset + shipX) % terrainWidth;
             if (shipWorldX < 0) {
                 shipWorldX += terrainWidth;
             }
@@ -305,11 +305,11 @@ public class DefenderScroller extends Base {
             final var currentShipScreenY = (int) shipY;
 
             // 4. Render ship into back buffer at current position
-            drawShip(shipX, currentShipScreenY, velocity);
+            drawShip(shipX, currentShipScreenY, scrollSpeed);
 
-            // 5. Randomized direction change
-            if (random.nextInt(400) == 0) {
-                velocity *= -1;
+            // 5. Periodically switch scroll direction smoothly
+            if (random.nextInt(600) == 0) {
+                scrollSpeed *= -1.0;
             }
 
             // 6. Mirror back buffer into snapshot image buffer efficiently

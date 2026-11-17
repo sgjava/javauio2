@@ -30,11 +30,11 @@ import picocli.CommandLine.Option;
  * </p>
  *
  * @author Steven P. Goldsmith
- * @version 1.1.0
+ * @version 1.0.0
  * @since 1.0.0
  */
 @Slf4j
-@Command(name = "Video", mixinStandardHelpOptions = true, version = "1.1.0-SNAPSHOT",
+@Command(name = "Video", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "Play raw RGB565 video frames centered on display")
 public class Video extends Base {
 

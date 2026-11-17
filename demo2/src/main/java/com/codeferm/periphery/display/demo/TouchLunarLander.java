@@ -28,10 +28,10 @@ import picocli.CommandLine.Option;
  * Touch-controlled Lunar Lander demo with optional PWM sound support.
  *
  * @author Steven P. Goldsmith
- * @version 1.0.1
+ * @version 1.0.0
  * @since 1.0.0
  */
-@Command(name = "TouchLunarLander", mixinStandardHelpOptions = true, version = "1.0.1-SNAPSHOT",
+@Command(name = "TouchLunarLander", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "Touch Lunar Lander game demo with optional sound")
 @Slf4j
 public class TouchLunarLander extends Base implements Callable<Integer> {

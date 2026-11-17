@@ -34,10 +34,10 @@ import picocli.CommandLine.Option;
  * or carried off the river. Sound is disabled unless --enable-sound is supplied.</p>
  *
  * @author Steven P. Goldsmith
- * @version 1.0.2-SNAPSHOT
+ * @version 1.0.0
  * @since 1.0.0
  */
-@Command(name = "TouchFrogger", mixinStandardHelpOptions = true, version = "1.0.2-SNAPSHOT",
+@Command(name = "TouchFrogger", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "Touch Frogger game demo with optional sound")
 @Slf4j
 public class TouchFrogger extends Base implements Callable<Integer> {

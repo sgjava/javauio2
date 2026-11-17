@@ -25,11 +25,11 @@ import picocli.CommandLine.Spec;
  * realistic iris textures across two independent displays using parallel producer-consumer background rendering pipelines.
  *
  * @author Steven P. Goldsmith
- * @version 1.3.0
+ * @version 1.0.0
  * @since 1.0.0
  */
 @Slf4j
-@Command(name = "Eyes", mixinStandardHelpOptions = true, version = "1.3.0-SNAPSHOT",
+@Command(name = "Eyes", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "Dual synchronized animated eyeballs with high-detail realistic iris textures")
 @Getter
 @Setter

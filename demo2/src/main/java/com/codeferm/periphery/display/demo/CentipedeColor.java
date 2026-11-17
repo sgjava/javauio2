@@ -3,9 +3,12 @@
  */
 package com.codeferm.periphery.display.demo;
 
+import com.codeferm.periphery.device.AbstractColorDisplay;
 import java.awt.Color;
 import java.awt.Font;
 import java.awt.image.BufferedImage;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -13,11 +16,14 @@ import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
+import picocli.CommandLine.Model.CommandSpec;
+import picocli.CommandLine.Spec;
 
 /**
  * Centipede clone.
  * <p>
- * A high-fidelity recreation of the Atari classic logic, optimized for unified color display hardware with dynamic scaling.
+ * A high-fidelity recreation of the Atari classic logic, optimized for unified color display hardware with dynamic scaling and
+ * direct FFM buffer streaming.
  *
  * @author Steven P. Goldsmith
  * @version 1.0.0
@@ -27,6 +33,22 @@ import picocli.CommandLine.Command;
 @Command(name = "CentipedeColor", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "Centipede clone for color displays")
 public class CentipedeColor extends Base {
+
+    /**
+     * Picocli command spec for inspecting parse results.
+     */
+    @Spec
+    private CommandSpec spec;
+
+    /**
+     * Bytes per pixel (RGB565 format).
+     */
+    private static final int BYTES_PER_PIXEL = 2;
+
+    /**
+     * Software Framebuffer (RGB565 byte array for high-speed display FFM transmission).
+     */
+    private byte[] frameBuffer;
 
     /**
      * Random number generator for game events.
@@ -390,7 +412,6 @@ public class CentipedeColor extends Base {
      */
     private void calculateScaling() {
         final var screenW = getWidth();
-        // Base scale targets a 96x64 display. Scales up smoothly for 240x240 or higher.
         spriteScale = Math.max(1.0f, Math.min(screenW / 96.0f, 3.0f));
         scaledBaseSize = Math.max(6, (int) (6 * spriteScale));
         scaledSpiderWidth = Math.max(8, (int) (8 * spriteScale));
@@ -536,16 +557,17 @@ public class CentipedeColor extends Base {
         playerX = getWidth() / 2.0f;
         playerY = getHeight() - scaledBaseSize - 2.0f;
 
+        frameBuffer = new byte[getWidth() * getHeight() * BYTES_PER_PIXEL];
+
         if (mushrooms.isEmpty()) {
             final var screenW = getWidth();
             final var playfieldH = (int) (getHeight() * PLAYER_AREA_TOP_RATIO);
             final var cols = Math.max(6, screenW / (scaledBaseSize * 2));
             final var rows = Math.max(4, playfieldH / (scaledBaseSize * 2));
 
-            // Distribute mushrooms dynamically across the full screen width and upper play area height
             for (var r = 0; r < rows; r++) {
                 for (var c = 0; c < cols; c++) {
-                    if (random.nextFloat() < 0.45f) { // 45% fill density per grid slot
+                    if (random.nextFloat() < 0.45f) {
                         final var mx = (c * scaledBaseSize * 2) + random.nextInt(scaledBaseSize);
                         final var my = (r * scaledBaseSize * 2) + (int) (scaledBaseSize * 1.5f) + random.nextInt(scaledBaseSize);
                         if (my < playfieldH) {
@@ -558,15 +580,16 @@ public class CentipedeColor extends Base {
     }
 
     /**
-     * Renders the current frame to the display.
+     * Converts the internal ARGB BufferedImage into an RGB565 byte array buffer and pushes it via direct FFM memory segment.
      */
-    private void render() {
+    private void renderAndFlush(final AbstractColorDisplay display) {
         final var screenW = getWidth();
         final var screenH = getHeight();
         final var g = getG2d();
 
         g.setColor(Color.BLACK);
         g.fillRect(0, 0, screenW, screenH);
+
         if (currentState == GameState.GAME_OVER) {
             g.setColor(Color.WHITE);
             g.setFont(new Font(Font.MONOSPACED, Font.BOLD, Math.max(9, (int) (10 * spriteScale))));
@@ -594,16 +617,42 @@ public class CentipedeColor extends Base {
             g.setColor(Color.CYAN);
             g.drawString(String.format("%05d L:%01d W:%d", score, lives, wave), 2, Math.max(8, (int) (8 * spriteScale)));
         }
-        getDisplay().drawImage(getImage());
+
+        // Fast conversion to RGB565 byte buffer
+        final var bi = getImage();
+        var index = 0;
+        for (var y = 0; y < screenH; y++) {
+            for (var x = 0; x < screenW; x++) {
+                final var rgb = bi.getRGB(x, y);
+                final var r = (rgb >> 16) & 0xFF;
+                final var gVal = (rgb >> 8) & 0xFF;
+                final var bVal = rgb & 0xFF;
+                final var rgb565 = ((r & 0xF8) << 8) | ((gVal & 0xFC) << 3) | (bVal >> 3);
+
+                frameBuffer[index++] = (byte) (rgb565 >> 8);
+                frameBuffer[index++] = (byte) rgb565;
+            }
+        }
+
+        display.setWindow(0, 0, screenW, screenH);
+        MemorySegment.copy(frameBuffer, 0, display.getImageSegment(), ValueLayout.JAVA_BYTE, 0, frameBuffer.length);
+        display.writeData(display.getImageSegment());
     }
 
     @Override
     public Integer call() throws Exception {
+        if (!spec.commandLine().getParseResult().hasMatchedOption("fps")) {
+            setFps(20);
+        }
         super.call();
         initLevel(true);
         var lastTime = System.nanoTime();
+        final var display = getDisplay();
+        final var frameNanos = 1_000_000_000L / Math.max(1, getFps());
+
         try {
             while (isRunning() && !Thread.currentThread().isInterrupted()) {
+                final var startTime = System.nanoTime();
                 final var currentTime = System.nanoTime();
                 var deltaTime = (currentTime - lastTime) / 1_000_000_000.0f;
                 lastTime = currentTime;
@@ -611,7 +660,8 @@ public class CentipedeColor extends Base {
                     deltaTime = 0.05f;
                 }
                 update(deltaTime);
-                render();
+                renderAndFlush(display);
+
                 if (currentState == GameState.GAME_OVER) {
                     try {
                         TimeUnit.SECONDS.sleep(3);
@@ -620,11 +670,16 @@ public class CentipedeColor extends Base {
                     }
                     break;
                 }
-                try {
-                    TimeUnit.MILLISECONDS.sleep(1000 / getFps());
-                } catch (final InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
+
+                final var elapsed = System.nanoTime() - startTime;
+                final var sleepNanos = frameNanos - elapsed;
+                if (sleepNanos > 0) {
+                    try {
+                        TimeUnit.NANOSECONDS.sleep(sleepNanos);
+                    } catch (final InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
                 }
             }
         } finally {

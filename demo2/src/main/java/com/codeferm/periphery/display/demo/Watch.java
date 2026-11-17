@@ -25,11 +25,11 @@ import picocli.CommandLine.Spec;
  * markers, and a date display using FFM and a producer-consumer background rendering pipeline.
  *
  * @author Steven P. Goldsmith
- * @version 1.1.0
+ * @version 1.0.0
  * @since 1.0.0
  */
 @Slf4j
-@Command(name = "Watch", mixinStandardHelpOptions = true, version = "1.1.0-SNAPSHOT",
+@Command(name = "Watch", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "Realistic analog watch with tick-tock second hand, hour/minute hands, and date display")
 public class Watch extends Base {
 

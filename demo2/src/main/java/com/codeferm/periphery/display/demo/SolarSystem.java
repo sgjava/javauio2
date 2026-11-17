@@ -24,11 +24,11 @@ import picocli.CommandLine.Spec;
  * sun-synced lighting on Display 2 using parallel pipelines.
  *
  * @author Steven P. Goldsmith
- * @version 1.1.0
+ * @version 1.0.0
  * @since 1.0.0
  */
 @Slf4j
-@Command(name = "SolarSystem", mixinStandardHelpOptions = true, version = "1.1.0-SNAPSHOT",
+@Command(name = "SolarSystem", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "Dual display multi-planet solar system overview and sun-synced planetary detail")
 @Getter
 @Setter

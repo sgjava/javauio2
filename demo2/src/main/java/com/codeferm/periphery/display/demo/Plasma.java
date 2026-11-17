@@ -17,11 +17,11 @@ import picocli.CommandLine.Command;
  * </p>
  *
  * @author Steven P. Goldsmith
- * @version 1.1.0
+ * @version 1.0.0
  * @since 1.0.0
  */
 @Slf4j
-@Command(name = "Plasma", mixinStandardHelpOptions = true, version = "1.1.0-SNAPSHOT",
+@Command(name = "Plasma", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "Procedural RGB Plasma Effect with dynamic sizing")
 public class Plasma extends Base {
 

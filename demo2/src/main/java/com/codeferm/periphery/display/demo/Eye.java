@@ -21,7 +21,7 @@ import picocli.CommandLine.Spec;
  * eyelids using FFM and a producer-consumer background rendering pipeline.
  *
  * @author Steven P. Goldsmith
- * @version 1.1.0
+ * @version 1.0.0
  * @since 1.0.0
  */
 @Slf4j

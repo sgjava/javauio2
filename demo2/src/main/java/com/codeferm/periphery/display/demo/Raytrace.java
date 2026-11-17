@@ -26,11 +26,11 @@ import picocli.CommandLine.Spec;
  * </p>
  *
  * @author Steven P. Goldsmith
- * @version 1.1.0
+ * @version 1.0.0
  * @since 1.0.0
  */
 @Slf4j
-@Command(name = "Raytrace", mixinStandardHelpOptions = true, version = "1.1.0-SNAPSHOT",
+@Command(name = "Raytrace", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT",
         description = "Castle raycaster with multi-threaded producer-consumer pipeline and direct pixel rendering")
 public class Raytrace extends Base {
 

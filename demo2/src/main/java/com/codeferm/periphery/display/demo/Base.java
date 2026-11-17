@@ -8,11 +8,14 @@ import com.codeferm.periphery.device.AbstractColorDisplay;
 import com.codeferm.periphery.device.AbstractTouch;
 import com.codeferm.periphery.device.Gc9a01;
 import com.codeferm.periphery.device.Ili9341;
+import com.codeferm.periphery.device.Ili9488;
 import com.codeferm.periphery.device.PwmBacklight;
 import com.codeferm.periphery.device.PwmDeviceFactory;
 import com.codeferm.periphery.device.Ssd1331;
 import com.codeferm.periphery.device.St7789;
 import com.codeferm.periphery.device.Xpt2046;
+import com.codeferm.periphery.event.HardwareListener;
+import com.codeferm.periphery.event.HardwareRegistry;
 import java.awt.Graphics2D;
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
@@ -22,6 +25,7 @@ import java.util.Properties;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.imageio.ImageIO;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -32,11 +36,12 @@ import picocli.CommandLine.Option;
  * <p>
  * Handles FFM native library loading, SPI/GPIO initialization for both display and touch controllers, calibration properties
  * management, and provides a unified Java2D {@link Graphics2D} drawing surface, along with generic touch rotation mapping,
- * hit-testing abstractions, and flexible PWM backlight support with HW/SW modes and inversion.
+ * hit-testing abstractions, and flexible PWM backlight support with HW/SW modes and inversion, protected by thread-safe atomic
+ * teardown mechanisms and synchronous shutdown hook execution.
  * </p>
  *
  * @author Steven P. Goldsmith
- * @version 1.1.1
+ * @version 1.0.0
  * @since 1.0.0
  */
 @Data
@@ -64,7 +69,7 @@ public abstract class Base implements Callable<Integer> {
     }
 
     @Option(names = {"--display-type"}, description
-            = "Display type (ST7789, ILI9341, SSD1331, GC9A01), ${DEFAULT-VALUE} by default.")
+            = "Display type (ST7789, ILI9341, ILI9488, SSD1331, GC9A01), ${DEFAULT-VALUE} by default.")
     private String displayType = "ST7789";
 
     @Option(names = {"-d", "--device"}, description = "SPI device for display, ${DEFAULT-VALUE} by default.")
@@ -82,14 +87,14 @@ public abstract class Base implements Callable<Integer> {
     @Option(names = {"-dc", "--dc-line"}, description = "DC line, ${DEFAULT-VALUE} by default.")
     private int dc = 71;
 
-    @Option(names = {"-res", "--res-line"}, description = "RES line (SSD1331/ILI9341/GC9A01), ${DEFAULT-VALUE} by default.")
+    @Option(names = {"-res", "--res-line"}, description = "RES line (SSD1331/ILI9341/ILI9488/GC9A01), ${DEFAULT-VALUE} by default.")
     private int res = 25;
 
     @Option(names = {"--led-backlight"}, description = "Enable LED backlight GPIO, ${DEFAULT-VALUE} by default.")
     private boolean ledEnabled = false;
 
     @Option(names = {"-led", "--led-line"}, description
-            = "LED backlight line (ST7789, ILI9341, GC9A01), ${DEFAULT-VALUE} by default.")
+            = "LED backlight line (ST7789, ILI9341, ILI9488, GC9A01), ${DEFAULT-VALUE} by default.")
     private int led = -1;
 
     // --- PWM Backlight Configuration Options ---
@@ -190,6 +195,16 @@ public abstract class Base implements Callable<Integer> {
      * Flag to signal rendering loops to terminate. Volatile ensures visibility across timer and shutdown hook threads.
      */
     private volatile boolean running = true;
+
+    /**
+     * Atomic flag ensuring native hardware teardown executes exactly once without race conditions.
+     */
+    private final AtomicBoolean cleanedUp = new AtomicBoolean(false);
+
+    /**
+     * Reference to the hardware cleanup shutdown hook thread.
+     */
+    private Thread cleanupHook;
 
     /**
      * Load touch calibration properties from disk if available.
@@ -309,6 +324,17 @@ public abstract class Base implements Callable<Integer> {
                     yield new Ili9341(device, mode, speed, gpioDevice, dc, res, ledPin, bufferSize);
                 }
             }
+            case "ILI9488" -> {
+                if (pwmBacklightEnabled) {
+                    final var pwmDeviceInstance = PwmDeviceFactory.create(pwmMode, pwmDevice, pwmChannel);
+                    final var backlight = new PwmBacklight(pwmDeviceInstance, pwmInverted);
+                    backlight.setBrightness(pwmPeriod, 1.0);
+                    backlight.enable();
+                    yield new Ili9488(device, mode, speed, gpioDevice, dc, res, backlight, bufferSize);
+                } else {
+                    yield new Ili9488(device, mode, speed, gpioDevice, dc, res, ledPin, bufferSize);
+                }
+            }
             case "GC9A01" -> {
                 if (pwmBacklightEnabled) {
                     final var pwmDeviceInstance = PwmDeviceFactory.create(pwmMode, pwmDevice, pwmChannel);
@@ -346,6 +372,14 @@ public abstract class Base implements Callable<Integer> {
             loadTouchProperties();
         }
 
+        // Unregister from HardwareRegistry if instances implement HardwareListener so Base has exclusive lifecycle ownership
+        if (display instanceof HardwareListener listener) {
+            HardwareRegistry.getInstance().unregister(listener);
+        }
+        if (touch instanceof HardwareListener listener) {
+            HardwareRegistry.getInstance().unregister(listener);
+        }
+
         // Initialize high-performance off-screen buffer
         final var bufferedImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
         this.image = bufferedImage;
@@ -354,15 +388,15 @@ public abstract class Base implements Callable<Integer> {
         final var mainThread = Thread.currentThread();
         final var scheduler = Executors.newSingleThreadScheduledExecutor();
 
-        // Ensures display and touch are shut down even if interrupted via Ctrl+C
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+        // Registers shutdown hook to handle Ctrl+C by executing done() synchronously
+        cleanupHook = new Thread(() -> {
             if (running) {
                 log.info("Ctrl+C detected. Powering down hardware...");
                 running = false;
-                mainThread.interrupt();
                 done();
             }
-        }, "Hardware-Cleanup-Hook"));
+        }, "Hardware-Cleanup-Hook");
+        Runtime.getRuntime().addShutdownHook(cleanupHook);
 
         // Timer to prevent perpetual execution in headless or automated environments
         if (runTime > 0) {
@@ -397,7 +431,6 @@ public abstract class Base implements Callable<Integer> {
             try {
                 if (image != null) {
                     final var outputFile = new File(fileName);
-                    // Create parent directories if required
                     if (outputFile.getParentFile() != null) {
                         outputFile.getParentFile().mkdirs();
                     }
@@ -415,31 +448,59 @@ public abstract class Base implements Callable<Integer> {
 
     /**
      * Executes hardware teardown and releases native resources cleanly across display and touch controllers.
+     * <p>
+     * Protected by an atomic boolean guard and shutdown hook unregistration to prevent double-free collisions and SIGSEGV crashes.
+     * </p>
      */
     public final void done() {
+        if (!cleanedUp.compareAndSet(false, true)) {
+            return;
+        }
+
+        // Unregister shutdown hook so normal exit doesn't race with cleanup
+        if (cleanupHook != null) {
+            try {
+                Runtime.getRuntime().removeShutdownHook(cleanupHook);
+            } catch (final IllegalStateException e) {
+                // Ignore if JVM is shutting down
+            }
+            cleanupHook = null;
+        }
+
         synchronized (this) {
             if (touch != null) {
+                final var t = touch;
+                touch = null;
                 try {
-                    touch.close();
+                    t.close();
                     log.info("Touch hardware resources released.");
                 } catch (final Exception e) {
-                    log.error("Touch cleanup failed: {}", e.getMessage());
+                    log.debug("Touch already closed: {}", e.getMessage());
                 }
-                touch = null;
             }
             if (display != null) {
+                final var d = display;
+                display = null;
                 try {
-                    display.clear();
-                    display.close();
+                    d.clear();
+                } catch (final Exception e) {
+                    log.debug("Display clear skipped: {}", e.getMessage());
+                }
+                try {
+                    d.close();
                     log.info("Display hardware resources released.");
                 } catch (final Exception e) {
-                    log.error("Display cleanup failed: {}", e.getMessage());
+                    log.debug("Display already closed: {}", e.getMessage());
                 }
-                display = null;
             }
             if (g2d != null) {
-                g2d.dispose();
+                final var g = g2d;
                 g2d = null;
+                try {
+                    g.dispose();
+                } catch (final Exception e) {
+                    // Ignore
+                }
             }
         }
     }

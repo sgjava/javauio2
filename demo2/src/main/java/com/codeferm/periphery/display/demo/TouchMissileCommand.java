@@ -40,7 +40,7 @@ import picocli.CommandLine.Option;
  * @version 1.0.0-SNAPSHOT
  * @since 1.0.0
  */
-@Command(name = "MissileCommandTouch", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT", description
+@Command(name = "TouchMissileCommand", mixinStandardHelpOptions = true, version = "1.0.0-SNAPSHOT", description
         = "Interactive touch Missile Command game demo with optional sound")
 @Slf4j
 public class TouchMissileCommand extends Base implements Callable<Integer> {
