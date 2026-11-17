@@ -34,8 +34,15 @@ This project adheres to rigorous development standards to ensure production-grad
 ### 1. Universal Kernel-Standardized I/O
 Most libraries require a "Provider" or specific plugin for every new board. **Java UIO 2** bypasses this middleman. By targeting the **Standard Linux Kernel ABI** (Character Devices and UIO), any board running a modern kernel is supported immediately. The Kernel is the only "Provider" you need.
 
-### 2. Deep Graphics with Abstract Color Displays
-While other libraries stop at "Blinky," Java UIO 2 provides a professional-grade graphics stack. By abstracting display hardware and utilizing high-performance memory segments via FFM, you gain access to optimized drawing routines, dynamic rotations, and rotation-agnostic touch mapping at near-native speeds.
+### 2. High-Performance Graphics & Abstract Color Displays
+
+Beyond basic GPIO toggling, `javauio2` delivers a professional-grade graphics and rendering stack designed for embedded Java. By unifying hardware controllers under the `AbstractColorDisplay` abstraction and leveraging zero-copy memory transfers via the Foreign Function & Memory (FFM) API, the framework achieves near-native rendering speeds. 
+
+This architecture provides robust capabilities out of the box:
+* **Zero-Copy Framebuffer Streaming:** Direct memory segment mapping eliminates garbage collection overhead and bus saturation.
+* **Unified Hardware Abstraction:** Write once and run seamlessly across diverse controllers (SSD1331, ILI9488, ST7789, GC9A01) and desktop simulations without touching application logic.
+* **Dynamic Resolution & Scaling:** Proportional sprite scaling and relative layouts allow codebases to effortlessly adapt from tiny 96×64 OLEDs to large 320×480 TFT panels.
+* **Flexible Transformations:** Built-in support for hardware rotation and optimized partial updates (dirty rectangles) for flicker-free performance.
 
 ### 3. Hardware-Accurate Native Sizing
 A major weakness in traditional libraries is their reliance on manual JNI headers. Java UIO 2 uses a **Native Sizer** during the build process (via QEMU emulation). This guarantees that `MemoryLayout` offsets are byte-perfect for the target CPU architecture (ARM64, ARM32, or x86_64), preventing alignment traps and crashes.
